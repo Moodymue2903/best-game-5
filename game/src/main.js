@@ -155,25 +155,76 @@ function runAutoStep() {
 }
 
 // ---- screenshot staging ----
+// __shotReady is set by the frame loop only once the shot is staged AND
+// every backdrop texture has loaded (renderer.backdropsReady()), so a shot
+// never captures a half-loaded vista.
+let shotStaged = false;
 function stageShot() {
   if (shotMode === 'title') {
     showOnly('title');
     renderer.setCamMode('title');
     renderer.setStage(0, state);
-  } else if (shotMode === 'cover' || shotMode === 'play') {
+    shotStaged = true;
+  } else if (shotMode === 'cover') {
+    // Cover: stage 6 Floating Castle Citadel at sunset — the King hauling
+    // a taut gold chain diagonally up at Aurelius, over-the-shoulder hero
+    // camera, castle backdrop behind. Fast-forward the autopilot to stage 6,
+    // then step only until the FIRST chain attaches. (Two earlier attempts
+    // staged on two chains — "two attached with one taut", then "two
+    // attached" — and BOTH caught Aurelius toppled. The reason: the second
+    // chain goes taut in its attach step (the King throws from a few metres,
+    // the chain is short, the slack is already gone), so the topple fires
+    // inside the same step the second chain appears. There is no step
+    // boundary at which two chains are attached and Aurelius is upright in
+    // stage 6 — two taut limbs IS the topple. One attached chain (possibly
+    // taut, one limb) guarantees zero stage-6 topples: Aurelius is upright
+    // and marching. The cover therefore shows ONE gold chain, not two.)
     startRun(state);
-    // Cover: ~7s in, stage 1, the colossus still upright and the King
-    // throwing chains at it. Play: ~14s in, stage 2, a toppled colossus
-    // and the King vaulting onto it.
-    const seconds = shotMode === 'cover' ? 7 : 14;
-    for (let i = 0; i < 60 * seconds; i += 1) {
-      if (state.screen === 'relic') { chooseRelic(state, 0); continue; }
+    let guard = 0;
+    while (state.stageIdx < 5 && state.screen !== 'lose' && guard < 60 * 400) {
+      if (state.screen === 'relic') { chooseRelic(state, 0); }
+      else if (state.screen === 'play') { step(state, autoInput(state)); }
+      else break;
+      guard += 1;
+    }
+    let n = 0;
+    while (n < 60 * 6) {
       if (state.screen !== 'play') break;
       step(state, autoInput(state));
+      n += 1;
+      if (state.chains.length >= 1) break;
     }
-    renderer.setStage(state.stageIdx, state);
-    renderer.setCamMode(shotMode === 'cover' ? 'cover' : 'follow');
+    renderer.setStage(5, state);
+    renderer.setCamMode('cover', state);
     showOnly(null);
+    const w = document.getElementById('ov-cover-wordmark');
+    if (w) w.style.display = 'block';
+    shotStaged = true;
+  } else if (shotMode === 'play') {
+    // Play: stage 4 Ringed Moon Observatory — the King on the golden vault
+    // arc, about to slam the exposed Heart-Sigil. Caught early in the vault
+    // (vaultT in (0.35, 0.45); the vault lasts 0.6s, King ~6m up) so the
+    // King, the fallen giant and the sigil share the frame — the apex
+    // (vaultT 0.3, King ~12m) put the King alone in empty sky.
+    startRun(state);
+    let guard = 0;
+    while (state.stageIdx < 3 && state.screen !== 'lose' && guard < 60 * 400) {
+      if (state.screen === 'relic') { chooseRelic(state, 0); }
+      else if (state.screen === 'play') { step(state, autoInput(state)); }
+      else break;
+      guard += 1;
+    }
+    let n = 0;
+    while (n < 60 * 60) {
+      if (state.screen !== 'play') break;
+      step(state, autoInput(state));
+      n += 1;
+      if (state.vaultT > 0.35 && state.vaultT < 0.45) break;
+    }
+    renderer.setStage(3, state);
+    renderer.setCamMode('playshot', state);
+    showOnly(null);
+    shotStaged = true;
   } else if (shotMode === 'victory') {
     // fast-forward the autopilot to a win
     startRun(state);
@@ -185,9 +236,9 @@ function stageShot() {
       guard += 1;
     }
     if (state.screen === 'win') showEnd(true);
-    renderer.setCamMode('follow');
+    renderer.setCamMode('victory', state);
+    shotStaged = true;
   }
-  window.__shotReady = true;
 }
 
 // ---- main loop ----
@@ -204,6 +255,7 @@ function frame(now) {
   if (shotMode) {
     if (frames === 2) stageShot();
     renderer.update(state, DT, input);
+    if (shotStaged && renderer.backdropsReady()) window.__shotReady = true;
     requestAnimationFrame(frame);
     return;
   }
