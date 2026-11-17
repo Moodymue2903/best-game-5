@@ -9,9 +9,9 @@ import { audio } from './audio.js';
 const params = new URLSearchParams(location.search);
 const autoMode = params.get('auto'); // '1' | 'lazy' | null
 const shotMode = params.get('shot'); // cover | play | title | victory | null
-// Fix round 2 (D): the 17% experiment switch — ?shot=cover&cover17=1 renders
-// the GLM variant (8.4x6.3 sprite, closer camera) for the A/B comparison.
-const cover17 = params.get('cover17') === '1';
+// Fix round 3: the 17% experiment switch (?shot=cover&cover17=1) is
+// DELETED — the standard camera is the only cover framing now, so the
+// experiment path cannot be shipped by accident.
 const seedParam = parseInt(params.get('seed') || '1', 10);
 
 const canvas = document.getElementById('game');
@@ -198,7 +198,6 @@ function stageShot() {
       if (state.chains.length >= 1) break;
     }
     renderer.setStage(5, state);
-    if (cover17) renderer.setCoverVariant('17');
     renderer.setCamMode('cover', state);
     showOnly(null);
     const w = document.getElementById('ov-cover-wordmark');
@@ -240,6 +239,13 @@ function stageShot() {
       guard += 1;
     }
     if (state.screen === 'win') showEnd(true);
+    // Fix round 3: stage the WIN stage's decor (stage 6 citadel). The
+    // victory branch never called setStage, so the renderer was still
+    // showing the STAGE-1 crystal-cave decor from init — one of those
+    // crystal cones sat 4.7 m from the victory camera and filled the
+    // frame as the flat teal wedge (probe, fix round 3). This is the
+    // root-cause fix; the victory hides in render.js are belt-and-braces.
+    renderer.setStage(state.stageIdx, state);
     renderer.setCamMode('victory', state);
     shotStaged = true;
   }

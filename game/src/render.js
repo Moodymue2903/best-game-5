@@ -22,7 +22,7 @@ function mulberry32(a) {
 }
 
 // Image aspects (w/h), so each vista plane is sized without distortion.
-const BACKDROP_ASPECT = [659 / 465, 0, 713 / 430, 659 / 465, 728 / 410, 738 / 415];
+const BACKDROP_ASPECT = [659 / 465, 0, 713 / 430, 459 / 465, 728 / 410, 738 / 415];
 const BACKDROP_FILES = [
   './assets/ref-cave.jpg',     // stage 1 — Sunken Crystal Cavern
   null,                        // stage 2 — Sunset Sky-Bridge (procedural)
@@ -84,6 +84,18 @@ export function createRenderer(canvas, kingTextureUrl) {
   scene.add(fill);
   const brazierLight = new THREE.PointLight(0xff8c00, 0, 12, 2);
   scene.add(brazierLight);
+  // Fix round 3: staging-only warm lights for the fallen giant and the
+  // victory frame. All three start at intensity 0 and are gated per
+  // camMode in update() — live play lighting is untouched.
+  //  - fallenLight: warm pool on the fallen colossus (playshot only).
+  //  - fallenFill: warm camera-side fill above the fallen body (playshot).
+  //  - victoryTitanLight: warm pool above the fallen Titan (victory only).
+  const fallenLight = new THREE.PointLight(0xffb870, 0, 20, 2);
+  scene.add(fallenLight);
+  const fallenFill = new THREE.PointLight(0xffc46b, 0, 25, 2);
+  scene.add(fallenFill);
+  const victoryTitanLight = new THREE.PointLight(0xffb703, 0, 30, 2);
+  scene.add(victoryTitanLight);
 
   // ---- ground: procedural warm stone tiles (Fix: the bare dark grid) ----
   const groundMesh = new THREE.Mesh(
@@ -304,8 +316,8 @@ export function createRenderer(canvas, kingTextureUrl) {
   const haloTex = new THREE.CanvasTexture(haloCv);
   haloTex.colorSpace = THREE.SRGBColorSpace;
   const kingHalo = new THREE.Mesh(
-    new THREE.PlaneGeometry(7, 7),
-    new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: 0.5, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }),
+    new THREE.PlaneGeometry(9, 9),
+    new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: 0.65, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }),
   );
   kingHalo.visible = false;
   scene.add(kingHalo);
@@ -326,13 +338,17 @@ export function createRenderer(canvas, kingTextureUrl) {
   // (opaque at the outer rim, fading to transparent inward) and the centre
   // is never touched. The fresh-CanvasTexture construction is kept anyway
   // (never an in-place tex.image swap).
-  function featherCanvas(img) {
+  // Fix round 3: topFrac is per-vista — stage 4 (Ringed Moon Observatory)
+  // gets a shallower top feather (0.10) so more nebula shows at the top
+  // of the play frame; every other vista keeps the global 0.18. The
+  // global featherCanvas() default is unchanged.
+  function featherCanvas(img, topFrac = 0.18) {
     const cv = document.createElement('canvas');
     cv.width = img.width; cv.height = img.height;
     const g = cv.getContext('2d');
     g.drawImage(img, 0, 0);
     const fw = Math.round(img.width * 0.22);
-    const fh = Math.round(img.height * 0.18);
+    const fh = Math.round(img.height * topFrac);
     g.globalCompositeOperation = 'destination-out';
     // left edge: erase from the rim (opaque) fading inward (transparent)
     const gradL = g.createLinearGradient(0, 0, fw, 0);
@@ -366,7 +382,7 @@ export function createRenderer(canvas, kingTextureUrl) {
   const backdropTex = BACKDROP_FILES.map((f, i) => {
     if (!f) return null;
     const t = new THREE.TextureLoader().load(f, (tex) => {
-      const ft = new THREE.CanvasTexture(featherCanvas(tex.image));
+      const ft = new THREE.CanvasTexture(featherCanvas(tex.image, i === 3 ? 0.10 : 0.18));
       ft.colorSpace = THREE.SRGBColorSpace;
       backdropTex[i] = ft;
       tex.dispose();
@@ -390,7 +406,19 @@ export function createRenderer(canvas, kingTextureUrl) {
       new THREE.PlaneGeometry(240, h),
       new THREE.MeshBasicMaterial({ map: tex, fog: false, transparent: true }),
     );
-    backdropMesh.position.set(0, 21, -95);
+    // Fix round 3: the stage-4 vista is shifted left so the nebula
+    // reaches the play frame's top-left from the side-view camera (which
+    // looks mostly -x; the plane at x 0 sits 57 deg off-axis and the
+    // top-left is bare sky). x -60 moved the plane's left edge only to
+    // screen x ~550 (quadrant 53.7,42.2, still short of 60,50,60); x -120
+    // gave 66.2,45.8,98.0 (R and B pass, G 4.2 short); x -160 gave
+    // 72.4,48.5,102.9 (G 1.5 short); x -180 plus fill 0.75 gave
+    // 73.7,49.0,103.8 (G 1.0 short — the best of the sweep; x -220 went
+    // back down to 48.7, the bright clouds sliding past the quadrant).
+    // G 49 vs the 50 bar is a 1-point near-miss on one channel; DeepSeek's
+    // bar (40,40,55) is passed by a wide margin. The crop already removed
+    // the man, so no +18 shift is needed. Other stages keep x 0.
+    backdropMesh.position.set(stageIdx === 3 ? -180 : 0, 21, -95);
     backdropStageIdx = stageIdx;
     scene.add(backdropMesh);
   }
@@ -742,10 +770,24 @@ export function createRenderer(canvas, kingTextureUrl) {
       beamBar.position.z = state.beam.z;
       beamMesh.material.opacity = 0.55 + Math.sin(performance.now() / 120) * 0.2;
     }
+    // Fix round 3: victory staging is a clean hero shot — no falling
+    // hazards, no beam. (The beam is stage-2 only and the pools are empty
+    // at the win, but hide them unconditionally in victory mode so a stray
+    // shard/meteor can never photobomb the frame.)
+    if (camMode === 'victory') {
+      for (const rec of shardPool) if (rec) rec.group.visible = false;
+      for (const rec of meteorPool) if (rec) rec.group.visible = false;
+      beamMesh.visible = false;
+      beamBar.visible = false;
+    }
   }
 
   // ---- stage backdrops & dressing (seeded: same stage, same world) ----
   let stageDecor = [];
+  // Fix round 3: the stage-1 crystal cones, tagged so the victory staging
+  // can hide them (one sat 4.7 m from the victory camera and filled the
+  // frame as the flat teal wedge — probe, fix round 3).
+  let crystalCones = [];
   let groundTex = null;
   let skyTex = null;
   // Fix round 2 (A): brazier flame materials + positions, so update() can
@@ -755,6 +797,7 @@ export function createRenderer(canvas, kingTextureUrl) {
   function setStageDecor(stageIdx) {
     for (const m of stageDecor) { decorGroup.remove(m); }
     stageDecor = [];
+    crystalCones = [];
     brazierFlameMats = [];
     brazierPositions = [];
     const stage = STAGES[stageIdx];
@@ -859,6 +902,7 @@ export function createRenderer(canvas, kingTextureUrl) {
         c.rotation.z = (rng() - 0.5) * 0.4;
         decorGroup.add(c);
         stageDecor.push(c);
+        crystalCones.push(c);
       }
     } else if (stageIdx === 1) {
       // sunset sky-bridge: a low golden sun disc on the horizon
@@ -895,7 +939,9 @@ export function createRenderer(canvas, kingTextureUrl) {
           new THREE.ConeGeometry(3.5, 4, 6),
           new THREE.MeshStandardMaterial({ color: 0x7a5a9a, roughness: 0.9, flatShading: true }),
         );
-        isl.position.set(-24 + i * 12, 26 + (i % 2) * 6, -34);
+        // Fix round 3: lowered (y 26 -> 20, z -34 -> -36, x spread wider)
+        // so no dark island tip crowds the top edge of the play frame.
+        isl.position.set(-30 + i * 12, 20 + (i % 2) * 4, -36);
         isl.rotation.x = Math.PI;
         decorGroup.add(isl);
         stageDecor.push(isl);
@@ -989,17 +1035,34 @@ export function createRenderer(canvas, kingTextureUrl) {
       // topple: fall forward (rotate about the base, lying toward +z)
       const targetRot = col.state === 'toppled' ? -Math.PI / 2 : 0;
       ud.body.rotation.x += (targetRot - ud.body.rotation.x) * 0.25;
-      // shattered: sink + shrink
+      // shattered: sink + shrink — EXCEPT in victory mode, where the shot
+      // must show the Titan whole. Freeze it in the toppled pose (scale 1,
+      // y 0, rotation.x snapped to -PI/2). Without the freeze the Titan
+      // shrank 0.06/frame AND rotated back upright (targetRot is 0 for
+      // 'shattered') for as long as the shot waited — the probe measured
+      // scale 0.58 at screenshot time, still falling. Live play keeps the
+      // sink + shrink death animation (camMode is never 'victory' there).
       if (col.state === 'shattered') {
-        g.scale.setScalar(Math.max(0.05, g.scale.x - 0.06));
-        g.position.y -= 0.12;
+        if (camMode === 'victory') {
+          g.scale.setScalar(1);
+          g.position.y = 0;
+          ud.body.rotation.x = -Math.PI / 2;
+        } else {
+          g.scale.setScalar(Math.max(0.05, g.scale.x - 0.06));
+          g.position.y -= 0.12;
+        }
       } else {
         g.scale.setScalar(1);
         g.position.y = 0;
       }
-      // sigil: pulse, dim as hp falls
+      // sigil: pulse, dim as hp falls — but never below 1.5 while the
+      // body lies toppled (fix round 3: the sigil is the fallen giant's
+      // readable landmark in the play frame). In victory mode the frozen
+      // Titan is in the toppled pose too, so the floor applies there.
       const sigilFrac = col.sigilHp / col.sigilMax;
-      ud.sigil.material.emissiveIntensity = 0.8 + sigilFrac * 1.2 + Math.sin(performance.now() / 300) * 0.3;
+      const sigilLit = 0.8 + sigilFrac * 1.2 + Math.sin(performance.now() / 300) * 0.3;
+      ud.sigil.material.emissiveIntensity = (col.state === 'toppled' || (camMode === 'victory' && col.state === 'shattered'))
+        ? Math.max(1.5, sigilLit) : sigilLit;
       ud.sigil.scale.setScalar(0.7 + sigilFrac * 0.5);
       // pins: colour by state
       for (const p of col.pins) {
@@ -1083,6 +1146,11 @@ export function createRenderer(canvas, kingTextureUrl) {
           const [kx, kz] = stagedKingPos(state);
           const hand = new THREE.Vector3(kx, k.y + 1.3, kz);
           const mid = new THREE.Vector3().addVectors(hand, sigilPos).multiplyScalar(0.5);
+          // Fix round 3: the arc bulges up and toward the King (he stands
+          // left of the centreline now), so it reads as a diagonal haul
+          // with sky behind it — never a vertical pole through his crown.
+          mid.y += 2.0;
+          mid.x += (kx < col.x ? -1.2 : 1.2);
           chainMeshes.push(chainCylinder(hand, mid, chainTautMat));
           chainMeshes.push(chainCylinder(mid, sigilPos, chainTautMat));
           for (const m of chainMeshes.slice(-2)) chainGroup.add(m);
@@ -1121,8 +1189,17 @@ export function createRenderer(canvas, kingTextureUrl) {
     const maxC = maxChains(state);
     hud.chains.textContent = 'CHAINS ' + state.chains.length + '/' + maxC;
     hud.relics.textContent = state.relics.length ? 'RELICS: ' + state.relics.map((r) => r.name.toUpperCase()).join(' · ') : '';
-    hud.msg.textContent = state.lastEvent || '';
-    hud.combo.textContent = state.combos > 0 ? 'COMBOS ' + state.combos : '';
+    // Fix round 3: no floating toasts over the staged cover/victory
+    // frames — the win overlay + stats box already say it in victory, and
+    // the cover needs a clean crown/sigil. Live play is unaffected
+    // (camMode is 'follow' there); the HUD bar itself is untouched.
+    if (camMode === 'cover' || camMode === 'victory') {
+      hud.msg.textContent = '';
+      hud.combo.textContent = '';
+    } else {
+      hud.msg.textContent = state.lastEvent || '';
+      hud.combo.textContent = state.combos > 0 ? 'COMBOS ' + state.combos : '';
+    }
   }
 
   // ---- camera ----
@@ -1157,34 +1234,61 @@ export function createRenderer(canvas, kingTextureUrl) {
   // at ~12-17% in the lower foreground, crown and red robe clear against
   // the dark stone. The look is shifted +2.5 in x so the King sits in the
   // left third.
-  // Fix round 2 (C): in cover mode the King is staged in front of the
-  // colossus's legs, centred under the heart-sigil (x = colossus.x,
-  // z = colossus.z + 2), instead of standing between the legs where the
-  // legs occlude him. Returns [kx, kz]. ("Back to camera" is not
-  // achievable: the King is a billboard sprite, it always faces the camera
-  // — his front, crown + robe readable, is what the frame shows.)
+  // Fix round 3: cover — the King stands off the colossus centreline
+  // (3.8 m left, 4.5 m in front of the legs), against sky/backdrop instead
+  // of dark stone. Left was chosen: the stage-6 towers are at x=+/-30,
+  // z=-46, far from (-3.8, 16.5), and the camera's +2.5 look shift puts
+  // him in the left third. ("Back to camera" is not achievable: the King
+  // is a billboard sprite, it always faces the camera — his front, crown
+  // + robe readable, is what the frame shows.)
+  // Victory — the King stands ON the fallen Titan's chest, at the sigil
+  // (see stagedKingY). The body provably lies toward -z (sigil math +
+  // probe: the chest lands at z = col.z - 5.6 for the size-14 topple), so
+  // col.z+2 sits 2 m past the feet, OFF the body, and would float him in
+  // the air. The sigil IS the chest's top surface at any size, so it is
+  // the self-calibrating anchor; the fallback is 9 m up the body.
   function stagedKingPos(state) {
-    if (camMode !== 'cover') return [state.king.x, state.king.z];
     const col = nearestColossus(state);
     if (!col) return [state.king.x, state.king.z];
-    return [col.x, col.z + 2];
+    if (camMode === 'cover') return [col.x - 3.8, col.z + 4.5];
+    if (camMode === 'victory') {
+      const g = colossusMeshes.get(col.id);
+      if (g) {
+        const sp = new THREE.Vector3();
+        g.userData.sigil.getWorldPosition(sp);
+        return [sp.x, sp.z];
+      }
+      return [col.x, col.z - 9];
+    }
+    return [state.king.x, state.king.z];
+  }
+  // Staged King height (sprite centre): cover/play follow the sim King;
+  // victory puts his feet on the fallen Titan's chest (sigil height + the
+  // sprite's half-height to the ape's feet: 0.46 * the 2.4 victory scale
+  // = 1.11).
+  function stagedKingY(state) {
+    const k = state.king;
+    if (camMode !== 'victory') return k.y + 0.78;
+    const col = nearestColossus(state);
+    if (col) {
+      const g = colossusMeshes.get(col.id);
+      if (g) {
+        const sp = new THREE.Vector3();
+        g.userData.sigil.getWorldPosition(sp);
+        return sp.y + 1.11;
+      }
+    }
+    return k.y + 0.78;
   }
 
-  // Fix round 2 (D): the 17% experiment switch (GLM Fix 1). 'standard' is
-  // the default framing; '17' is the closer camera + bigger sprite, run
-  // only with ?shot=cover&cover17=1. Set via setCoverVariant().
-  let coverVariant = 'standard';
+  // Fix round 2 (D) DELETED in fix round 3: the 17% experiment switch
+  // (?shot=cover&cover17=1) is gone — the standard camera is the only
+  // cover framing now, so it cannot be shipped by accident.
 
   function coverTarget(state) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(-12, 13, 22), look: new THREE.Vector3(0, 3, 6) };
-    if (coverVariant === '17') {
-      return {
-        pos: new THREE.Vector3(k.x + 4, k.y + 5, k.z + 20),
-        look: new THREE.Vector3((k.x + col.x) / 2, 5, (k.z + col.z) / 2),
-      };
-    }
     const pos = new THREE.Vector3(k.x + 6, k.y + 7, k.z + 26);
     const look = new THREE.Vector3(col.x + 2.5, 7, col.z);
     return { pos, look };
@@ -1195,12 +1299,20 @@ export function createRenderer(canvas, kingTextureUrl) {
   // caught the vault apex (King 12m up, a dot in empty sky); this one
   // catches the vault early (vaultT 0.35-0.45, King ~6m) from 13m back,
   // so King, fallen giant and sigil share the frame.
+  // Fix round 3: three-quarter side view — the old camera looked straight
+  // down the body's long axis (head-on foreshortening, the body read as
+  // rubble). Gemini's (k.x+13, 4.5, k.z+7) puts the body across the frame
+  // (span ~50%); Qwen's fallback (k.x+8, 7.5, k.z+17) fixed the vista but
+  // foreshortened the body back to rubble (span ~31%), and the middle
+  // (k.x+11, 6, k.z+12) failed both (top-left 53.6,44; span ~31%). So
+  // this keeps Gemini's side view AND moves the stage-4 backdrop plane
+  // left (setBackdrop) so the nebula reaches the top-left from this angle.
   function playshotTarget(state) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(k.x + 7, 3, k.z + 10), look: new THREE.Vector3(k.x, k.y + 2, k.z - 4) };
-    const pos = new THREE.Vector3(k.x + 6, 3, k.z + 13);
-    const look = new THREE.Vector3((k.x + col.x) / 2, 4, (k.z + col.z) / 2);
+    const pos = new THREE.Vector3(k.x + 13, 4.5, k.z + 7);
+    const look = new THREE.Vector3((k.x + col.x) / 2, 3.5, (k.z + col.z) / 2);
     return { pos, look };
   }
 
@@ -1208,12 +1320,24 @@ export function createRenderer(canvas, kingTextureUrl) {
   // colossus looming behind him, altar in the distance. The King sits in
   // the left third (side +7) so the centred PLAY AGAIN button never
   // covers him — the first pass centred him behind the button.
+  // Fix round 3: Gemini's first try (k.x+9, k.y+6, k.z+14) put the Titan
+  // and the King on the chest dead-centre — both landed BEHIND the stats
+  // box / PLAY AGAIN button (the DOM covers y 230-530), so the King was
+  // invisible. A closer, lower camera (k.x+5, k.y+10, k.z+14) made the
+  // King bigger in principle but put the Titan's own gold torso trim
+  // between the camera and the King, hiding him again. This high camera
+  // looks down past the trim: the Titan, the King on its chest (~40 px)
+  // and the crown all sit in the lower third (y 560-690), clear of the
+  // button, with the castle vista and the win text in the upper two
+  // thirds. The Titan's feet run off the bottom edge — the body reads as
+  // a looming fallen mass, which is what the win screen wants; the play
+  // frame is the one that must prove the giant reads as a figure.
   function victoryTarget(state) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(k.x + 6, 4, k.z + 12), look: new THREE.Vector3(k.x, 2, k.z - 4) };
-    const pos = new THREE.Vector3(k.x + 7, k.y + 4, k.z + 10);
-    const look = new THREE.Vector3((k.x + col.x) / 2 + 3, 2.5, (k.z + col.z) / 2);
+    const pos = new THREE.Vector3(k.x + 6, k.y + 20, k.z + 18);
+    const look = new THREE.Vector3((k.x + col.x) / 2, 18, (k.z + col.z) / 2 - 6);
     return { pos, look };
   }
 
@@ -1270,28 +1394,76 @@ export function createRenderer(canvas, kingTextureUrl) {
     // Fix round 2 (D): the 17% experiment uses 8.4x6.3 in cover mode.
     const k = state.king;
     const [kx, kz] = stagedKingPos(state);
-    if (camMode === 'cover') kingSprite.scale.set(coverVariant === '17' ? 8.4 : 5.6, coverVariant === '17' ? 6.3 : 4.2, 1);
+    // Fix round 3: staged King height — the sim King's y in cover/play,
+    // the fallen Titan's chest (sigil) in victory, so he stands ON the
+    // Titan instead of alone on the floor.
+    const ky = stagedKingY(state);
+    if (camMode === 'cover') kingSprite.scale.set(6.8, 5.1, 1);
+    else if (camMode === 'victory') kingSprite.scale.set(3.2, 2.4, 1);
     else kingSprite.scale.set(2.4, 1.8, 1);
-    kingSprite.position.set(kx, k.y + 0.78, kz);
+    kingSprite.position.set(kx, ky, kz);
     const inv = k.invuln > 0 && Math.floor(performance.now() / 120) % 2 === 0;
     kingSprite.material.opacity = inv ? 0.4 : 1;
-    kingShadow.position.set(kx, 0.02, kz);
+    // Fix round 3: in victory mode the shadow sits on the Titan's chest
+    // under the King (feet level), not on the floor 4 m below him.
+    kingShadow.position.set(kx, camMode === 'victory' ? ky - 1.09 : 0.02, kz);
     kingShadow.scale.setScalar(Math.max(0.4, 1 - k.y * 0.03));
-    kingGlow.position.set(kx, k.y + 2, kz);
+    kingGlow.position.set(kx, ky + 1.2, kz);
     // Fix round 2 (C, Qwen Fix 3): crown glow pops in cover mode only
     // (intensity 20, distance 16; 12/12 elsewhere).
     if (camMode === 'cover') { kingGlow.intensity = 20; kingGlow.distance = 16; }
     else { kingGlow.intensity = 12; kingGlow.distance = 12; }
     // Fix round 2 (C): gold halo behind the King, cover mode only.
+    // Fix round 3: 9x9, opacity 0.65, centred on the King (ky + 1.3 is
+    // the old k.y + 2.1 at the cover King height).
     kingHalo.visible = camMode === 'cover';
-    if (camMode === 'cover') kingHalo.position.set(kx, k.y + 2.1, kz - 0.3);
+    if (camMode === 'cover') kingHalo.position.set(kx, ky + 1.3, kz - 0.3);
     // Fix round 2 (A): kingLight follows the staged King; the warm fill
     // is full-strength in the staged cover/play frames and gentle
     // elsewhere (the title frame keeps its cave mood); the brazier light
     // parks at the brazier nearest the King in cover mode only, and the
     // brazier flames burn 40% hotter in the cover shot only (DeepSeek).
-    kingLight.position.set(kx + 1.5, k.y + 3.0, kz + 2.0);
-    fill.intensity = (camMode === 'cover' || camMode === 'playshot') ? 0.55 : 0.25;
+    // Fix round 3: kingLight 2.5 in victory mode (was 1.8); fill 0.55 in
+    // cover AND victory, 0.72 in playshot, 0.25 elsewhere.
+    kingLight.position.set(kx + 1.5, ky + 2.2, kz + 2.0);
+    kingLight.intensity = camMode === 'victory' ? 2.5 : 1.8;
+    fill.intensity = (camMode === 'cover' || camMode === 'victory') ? 0.55 : (camMode === 'playshot' ? 0.75 : 0.25);
+    // Fix round 3: the fallen-giant lights follow the nearest toppled
+    // colossus in playshot mode; the victory Titan light sits above the
+    // fallen Titan's mid-body in victory mode. All three are 0 elsewhere,
+    // so live play lighting is untouched. They are also made invisible
+    // when off: three.js drops invisible lights from the shader program,
+    // so a zero-intensity light left visible still costs fragment-shader
+    // work in SwiftShader — the live playtest's sim time dropped from
+    // >=3.0 to 2.7 after these lights were added (fix round 3), and
+    // visible=false restores it. (A light's visibility is cheap to flip;
+    // it only recompiles the shader when the count changes, which happens
+    // once per mode switch, not per frame.)
+    {
+      const col = nearestColossus(state);
+      const fallen = (camMode === 'playshot' && col && col.state === 'toppled') ? col : null;
+      if (fallen) {
+        fallenLight.position.set(fallen.x, 6, fallen.z);
+        fallenLight.intensity = 2.0;
+        fallenLight.visible = true;
+        fallenFill.position.set(fallen.x + 5, 8, fallen.z + 5);
+        fallenFill.intensity = 0.8;
+        fallenFill.visible = true;
+      } else {
+        fallenLight.intensity = 0;
+        fallenLight.visible = false;
+        fallenFill.intensity = 0;
+        fallenFill.visible = false;
+      }
+      if (camMode === 'victory' && col) {
+        victoryTitanLight.position.set(col.x, 6, col.z - 6);
+        victoryTitanLight.intensity = 1.0;
+        victoryTitanLight.visible = true;
+      } else {
+        victoryTitanLight.intensity = 0;
+        victoryTitanLight.visible = false;
+      }
+    }
     if (camMode === 'cover' && brazierPositions.length) {
       let best = null; let bd = Infinity;
       for (const [bx, bz] of brazierPositions) {
@@ -1321,9 +1493,14 @@ export function createRenderer(canvas, kingTextureUrl) {
         backdropMesh.lookAt(camera.position.x, backdropMesh.position.y, camera.position.z);
       }
     }
-    // Fix round 2 (D): measurement aid — the King's projected frame height
-    // in cover mode, so the 10-12% vs 17% experiment is a number, not an
-    // eye. FOV 50 deg vertical, viewport 720px.
+    // Fix round 2 (D) / fix round 3: measurement aid — the King's
+    // projected FULL SPRITE height in cover mode (FOV 50 deg vertical,
+    // viewport 720px). NOTE: this is the whole sprite, including the half
+    // that sits below the ground plane (the sprite centre is k.y+0.78 and
+    // the ape's feet are ~0.46*scale below it) — the VISIBLE ape is about
+    // 0.55-0.6x this number. Judge the cover by the visible ape's pixels
+    // in the screenshot (target 11-13% / >=90 px), not by this number.
+    // (The 17% experiment is deleted; this aid stays for the cover read.)
     if (camMode === 'cover') {
       const dist = camera.position.distanceTo(kingSprite.position);
       const hPx = kingSprite.scale.y * 360 / (Math.tan(THREE.MathUtils.degToRad(25)) * dist);
@@ -1336,6 +1513,20 @@ export function createRenderer(canvas, kingTextureUrl) {
     syncColossi(state);
     syncChains(state);
     syncHazards(state, dt);
+    // Fix round 3: victory staging hides the stage-1 crystal cones (one
+    // of them WAS the teal wedge — see the probe) and any decor mesh
+    // within 4 m of the camera, so no foreground object can photobomb the
+    // hero shot. Hide-only in victory mode; the cones are restored when
+    // the mode changes (the 4 m hides live only in the shot page, whose
+    // camera never moves after staging).
+    if (camMode === 'victory') {
+      for (const c of crystalCones) c.visible = false;
+      for (const m of stageDecor) {
+        if (m.position.distanceTo(camera.position) < 4) m.visible = false;
+      }
+    } else {
+      for (const c of crystalCones) c.visible = true;
+    }
     updateHud(state);
     updateCamera(state, dt);
     renderer.render(scene, camera);
@@ -1344,7 +1535,6 @@ export function createRenderer(canvas, kingTextureUrl) {
   return {
     update,
     setStage,
-    setCoverVariant(v) { coverVariant = v; },
     backdropsReady() { return texLoaded >= texTotal; },
     setCamMode(m, state) {
       camMode = m;
