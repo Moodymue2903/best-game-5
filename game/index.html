@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CROWNBOUND — Anchor &amp; Topple</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #10255e;
+    font-family: 'Trebuchet MS', 'Segoe UI', Verdana, sans-serif; color: #fff5e0; }
+  #wrap { position: relative; width: 100vw; height: 100vh; }
+  #game { display: block; width: 100%; height: 100%; }
+  /* ---- HUD ---- */
+  #hud { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 10px;
+    align-items: flex-start; padding: 10px 14px; pointer-events: none; z-index: 5;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
+  .hud-chip { background: rgba(16,37,94,0.72); border: 2px solid #ffc53d; border-radius: 10px;
+    padding: 6px 12px; font-weight: bold; font-size: 15px; white-space: nowrap; }
+  #hud-hpbar-wrap { width: 170px; height: 14px; background: rgba(0,0,0,0.55);
+    border: 2px solid #ffc53d; border-radius: 8px; overflow: hidden; margin-top: 4px; }
+  #hud-hpbar { height: 100%; width: 100%; background: #5ef2a0; transition: width 0.2s; }
+  #hud-stage { flex: 1; text-align: center; font-size: 17px; letter-spacing: 1px; }
+  #hud-msg { position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+    font-size: 20px; font-weight: bold; color: #ffc53d; text-shadow: 0 2px 6px #000;
+    pointer-events: none; z-index: 5; white-space: nowrap; }
+  #hud-combo { position: absolute; top: 100px; left: 50%; transform: translateX(-50%);
+    font-size: 26px; font-weight: bold; color: #5ef2ff; text-shadow: 0 2px 6px #000;
+    pointer-events: none; z-index: 5; }
+  #hud-relics { position: absolute; bottom: 12px; left: 14px; font-size: 13px;
+    color: #ffc53d; text-shadow: 0 1px 3px #000; pointer-events: none; z-index: 5; max-width: 60vw; }
+  #hud-help { position: absolute; bottom: 12px; right: 14px; font-size: 12px; color: #cfe0ff;
+    text-shadow: 0 1px 3px #000; text-align: right; pointer-events: none; z-index: 5; }
+  /* ---- overlays ---- */
+  .overlay { position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; z-index: 10;
+    background: rgba(8, 16, 48, 0.55); text-align: center; padding: 24px; }
+  .overlay h1 { font-size: 64px; letter-spacing: 6px; color: #ffc53d;
+    text-shadow: 0 0 24px rgba(255,197,61,0.6), 0 4px 0 #7a4a00, 0 6px 18px #000; }
+  .overlay h2 { font-size: 40px; letter-spacing: 3px; color: #ffc53d;
+    text-shadow: 0 0 18px rgba(255,197,61,0.5), 0 3px 0 #7a4a00; }
+  .overlay .tag { font-size: 20px; color: #5ef2ff; font-weight: bold; letter-spacing: 2px; }
+  .overlay .story { font-size: 17px; line-height: 1.55; max-width: 640px; color: #fff5e0; }
+  .overlay .controls { font-size: 15px; line-height: 1.8; color: #cfe0ff; background: rgba(16,37,94,0.8);
+    border: 2px solid #5ef2ff; border-radius: 12px; padding: 12px 22px; text-align: left; }
+  .overlay .controls b { color: #ffc53d; }
+  .big-btn { pointer-events: auto; cursor: pointer; font-size: 22px; font-weight: bold;
+    letter-spacing: 2px; color: #10255e; background: linear-gradient(#ffe27a, #ffc53d);
+    border: 3px solid #fff5e0; border-radius: 14px; padding: 12px 34px;
+    box-shadow: 0 6px 0 #7a4a00, 0 10px 24px rgba(0,0,0,0.5); }
+  .big-btn:hover { filter: brightness(1.1); }
+  .big-btn:active { transform: translateY(3px); box-shadow: 0 3px 0 #7a4a00; }
+  #relic-choices { display: flex; gap: 16px; }
+  .relic-btn { pointer-events: auto; cursor: pointer; width: 210px; min-height: 130px;
+    background: linear-gradient(#2a3f7a, #16224f); border: 3px solid #ffc53d; border-radius: 14px;
+    color: #fff5e0; padding: 14px; display: flex; flex-direction: column; gap: 8px;
+    font-family: inherit; text-align: center; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
+  .relic-btn:hover { border-color: #5ef2ff; transform: translateY(-3px); }
+  .relic-btn b { font-size: 17px; color: #ffc53d; }
+  .relic-btn span { font-size: 13px; line-height: 1.45; color: #dfe8ff; }
+  #win-stats, #lose-stats { font-size: 18px; line-height: 1.7; background: rgba(16,37,94,0.8);
+    border: 2px solid #ffc53d; border-radius: 12px; padding: 14px 26px; }
+  #lose-reason { font-size: 17px; color: #ff8080; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+  <div id="hud">
+    <div class="hud-chip"><span id="hud-hp">HP 100</span>
+      <div id="hud-hpbar-wrap"><div id="hud-hpbar"></div></div>
+    </div>
+    <div class="hud-chip" id="hud-stage">STAGE 1/6</div>
+    <div class="hud-chip" id="hud-score">SCORE 0</div>
+    <div class="hud-chip" id="hud-timer">SIEGE 90s</div>
+    <div class="hud-chip" id="hud-chains">CHAINS 0/2</div>
+  </div>
+  <div id="hud-msg"></div>
+  <div id="hud-combo"></div>
+  <div id="hud-relics"></div>
+  <div id="hud-help">WASD move &nbsp;·&nbsp; SPACE jump / vault &nbsp;·&nbsp; CLICK throw chain / slam<br>
+    F or RIGHT-CLICK haul &nbsp;·&nbsp; M mute &nbsp;·&nbsp; R restart</div>
+
+  <div class="overlay" id="ov-title">
+    <h1>CROWNBOUND</h1>
+    <div class="tag">ANCHOR &amp; TOPPLE — THE APE KING VS THE COLOSSI</div>
+    <div class="story">Six colossi march on the Sanctuary Altar. You are the Ape King — small,
+      crowned, and very stubborn. Throw golden chains around their limbs, haul them taut,
+      topple the giants, vault onto their shoulders and shatter the heart-sigil on their
+      chest. One slam per topple — they buck you off and rise again. Hold the altar.</div>
+    <div class="controls">
+      <b>WASD / Arrows</b> — run &nbsp;·&nbsp; <b>Mouse</b> — aim at a glowing pin<br>
+      <b>Left-click</b> — throw a chain (or slam the sigil while riding)<br>
+      <b>SPACE</b> — jump, or vault onto a toppled colossus &nbsp;·&nbsp; <b>F / Right-click</b> — haul chains taut<br>
+      Chain a pin to a pylon — or pin to pin, and two giants trip each other.<br>
+      Beware: shockwaves, falling shards, scarabs, pits — and Aurelius, the Crowned Titan.
+    </div>
+    <button class="big-btn" id="btn-start">👑 &nbsp;START THE DEFENCE</button>
+  </div>
+
+  <div class="overlay" id="ov-relic">
+    <h2>STAGE CLEAR!</h2>
+    <div class="tag">CHOOSE A ROYAL RELIC</div>
+    <div id="relic-choices"></div>
+  </div>
+
+  <div class="overlay" id="ov-win">
+    <h2>👑 THE KINGDOM STANDS!</h2>
+    <div class="tag">AURELIUS IS SHATTERED — THE ALTAR HOLDS</div>
+    <div id="win-stats"></div>
+    <button class="big-btn" id="btn-restart-win">PLAY AGAIN (R)</button>
+  </div>
+
+  <div class="overlay" id="ov-lose">
+    <h2>THE ALTAR HAS FALLEN</h2>
+    <div id="lose-reason"></div>
+    <div id="lose-stats"></div>
+    <button class="big-btn" id="btn-restart-lose">TRY AGAIN (R)</button>
+    <button class="big-btn" id="btn-title" style="font-size:16px;padding:8px 20px;">TITLE</button>
+  </div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
