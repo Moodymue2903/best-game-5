@@ -1,12 +1,18 @@
 // CROWNBOUND — screenshot staging. Chooses the frame each named shot shows:
-//   cover   — stage 6 Floating Castle Citadel at sunset: the King hauling
-//             two taut gold chains up at Aurelius, over-the-shoulder hero
-//             camera, castle backdrop, CROWNBOUND wordmark top-left
-//   play    — stage 4 Ringed Moon Observatory: the King at the apex of the
-//             golden vault arc, about to slam the exposed Heart-Sigil
+//   cover   — stage 6 Floating Castle Citadel at sunset: the King staged in
+//             front of the colossus's legs, centred under the heart-sigil,
+//             hauling a gold chain arc up at Aurelius (cover-only staging
+//             decal from his hand to the sigil; the sim holds exactly ONE
+//             chain, HUD CHAINS 1/2 — two taut limb-chains IS the topple,
+//             so no second limb-chain exists while Aurelius stands),
+//             castle backdrop, CROWNBOUND wordmark top-left
+//   play    — stage 4 Ringed Moon Observatory: the King caught EARLY in the
+//             vault (vaultT 0.35-0.45, ~6m up), King, fallen giant and sigil
+//             sharing the frame under the nebula
 //   title   — the title screen over the crystal cave (unchanged)
 //   victory — the win screen after a full autopilot victory; the King stands
-//             on the fallen Titan's crown, stats box at 0.6 opacity
+//             in the left third, clear of the PLAY AGAIN button, stats box
+//             at 0.6 opacity
 // The actual staging runs in main.js (?shot=...); this module only exposes
 // the shot list for the tooling. Files are JPEG (1280x720, q85).
 export const SHOTS = ['cover', 'play', 'title', 'victory'];

@@ -62,11 +62,37 @@ export function createRenderer(canvas, kingTextureUrl) {
   const rim = new THREE.DirectionalLight(0xffd43b, 0.85);
   rim.position.set(-20, 14, -24);
   scene.add(rim);
+  // Fix round 2 (A): warm floor light. The cover/play lower third read
+  // dark even after the fix-round-1 brightening, so the floor gets its own
+  // warm bounce instead of a flat global brightness bump:
+  //  - HemisphereLight, per-stage colours set in setStageDecor (Gemini:
+  //    Stage 6 0xffb870/0x6e4a5e/1.15, Stage 4 0x7ce8ff/0x3d356b/1.10).
+  //  - kingLight: warm point light above/in front of the King (Gemini:
+  //    0xffaa44, 1.8, 18 at king+1.5/+3.0/+2.0) — it follows the staged
+  //    King position in cover mode, so it lights the hero + foreground.
+  //  - fill: warm camera-side fill (Qwen: 0xffd9a0, 0.55 at (0,6,26));
+  //    intensity is per-camMode in update() (0.55 cover/playshot, 0.25
+  //    elsewhere) so the title frame keeps its cave mood.
+  //  - brazierLight: ember-orange pool at the brazier nearest the King
+  //    (DeepSeek: #FF8C00, 2.5, distance 12, decay 2), cover mode only.
+  const hemi = new THREE.HemisphereLight(0xffe8c8, 0x5a4a5e, 0.6);
+  scene.add(hemi);
+  const kingLight = new THREE.PointLight(0xffaa44, 1.8, 18, 2);
+  scene.add(kingLight);
+  const fill = new THREE.DirectionalLight(0xffd9a0, 0.55);
+  fill.position.set(0, 6, 26);
+  scene.add(fill);
+  const brazierLight = new THREE.PointLight(0xff8c00, 0, 12, 2);
+  scene.add(brazierLight);
 
   // ---- ground: procedural warm stone tiles (Fix: the bare dark grid) ----
   const groundMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA_HALF_X * 2 + 8, ARENA_HALF_Z * 2 + 8),
-    new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.05 }),
+    // Fix round 2 (A, Gemini): roughness 0.9 -> 0.62, metalness 0.05 -> 0.12
+    // so the sunset/nebula light catches the stone tiles; the subtle warm
+    // emissive (0x241934, 0.35) lifts the floor without the 0x9a8ea8 colour
+    // tint, which would multiply the ground texture map down.
+    new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.12, emissive: 0x241934, emissiveIntensity: 0.35 }),
   );
   groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.receiveShadow = true;
@@ -78,15 +104,17 @@ export function createRenderer(canvas, kingTextureUrl) {
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d');
     // base: the stage's warm ground tone, lifted ~12% (ref9/ref8: the world
-    // is lush and bright, not a dungeon floor)
-    g.fillStyle = shade(stage.ground, 0.12);
+    // is lush and bright, not a dungeon floor). Fix round 2 (A, Qwen):
+    // base lift 0.12 -> 0.20 — the stage grounds are dark violet
+    // (#241a4d / #2a2450), which is why the lower third read black.
+    g.fillStyle = shade(stage.ground, 0.20);
     g.fillRect(0, 0, W, H);
     // large stone tiles with per-tile tone variation
     const cols = 8, rows = 6;
     const tw = W / cols, th = H / rows;
     for (let i = 0; i < cols; i += 1) {
       for (let j = 0; j < rows; j += 1) {
-        const v = 0.12 + (rng() - 0.5) * 0.16;
+        const v = 0.20 + (rng() - 0.5) * 0.14;
         g.fillStyle = shade(stage.ground, v);
         g.fillRect(i * tw + 2, j * th + 2, tw - 4, th - 4);
       }
@@ -113,9 +141,12 @@ export function createRenderer(canvas, kingTextureUrl) {
       }
       g.stroke();
     }
-    // gold-inlaid runes: circles + strokes in the trim colour
+    // gold-inlaid runes: circles + strokes in the trim colour. Fix round 2
+    // (A): the "ground-trim" lift Qwen asked for has no separate trim
+    // material — the runes ARE the trim, painted into this texture — so
+    // their alpha rises 0.55 -> 0.75 and they read as gold inlay, not dirt.
     g.strokeStyle = stage.groundTrim;
-    g.globalAlpha = 0.55;
+    g.globalAlpha = 0.75;
     for (let c = 0; c < 6; c += 1) {
       const x = rng() * W, y = rng() * H, r = 14 + rng() * 26;
       g.lineWidth = 3;
@@ -255,55 +286,112 @@ export function createRenderer(canvas, kingTextureUrl) {
   // crown glow above the King
   const kingGlow = new THREE.PointLight(0xffc53d, 12, 12, 1.8);
   scene.add(kingGlow);
+  // Fix round 2 (C, Qwen Fix 3): cover-only gold halo behind the King so he
+  // pops at thumbnail size without growing past the scale story. A 7x7
+  // plane with a radial-gradient canvas texture (gold centre -> transparent),
+  // additive, fog:false, opacity 0.5, shown only in cover mode.
+  const haloCv = document.createElement('canvas');
+  haloCv.width = 256; haloCv.height = 256;
+  {
+    const hg = haloCv.getContext('2d');
+    const grad = hg.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, 'rgba(255, 197, 61, 0.9)');
+    grad.addColorStop(0.5, 'rgba(255, 170, 60, 0.35)');
+    grad.addColorStop(1, 'rgba(255, 170, 60, 0)');
+    hg.fillStyle = grad;
+    hg.fillRect(0, 0, 256, 256);
+  }
+  const haloTex = new THREE.CanvasTexture(haloCv);
+  haloTex.colorSpace = THREE.SRGBColorSpace;
+  const kingHalo = new THREE.Mesh(
+    new THREE.PlaneGeometry(7, 7),
+    new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: 0.5, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  kingHalo.visible = false;
+  scene.add(kingHalo);
 
   // ---- backdrop vistas: the user's reference images as distant planes ----
-  // Feather the left/right edges of each vista into transparency so the
-  // backdrop melts into the stage sky instead of ending in a hard seam.
-  function featherEdges(tex) {
-    const img = tex.image;
-    if (!img || !img.width) return;
+  // Feather the edges of each vista into transparency so the backdrop melts
+  // into the stage sky instead of ending in a hard seam. Fix round 2 (B):
+  // feathering is fw 0.22 on L/R plus top/bottom gradients fh 0.18.
+  // ROOT CAUSE, PROVED BY PROBE (fix round 2): the old helper used
+  // 'destination-in' with fills over just the edge bands. That op KEEPS the
+  // destination ONLY where the source shape was drawn — so band fills erase
+  // everything OUTSIDE the bands, i.e. the whole picture. (The fix-round-1
+  // record blamed the in-place tex.image swap; the probe shows the swap
+  // was innocent and the composite-op semantics were the killer — a solid
+  // opaque rect under destination-in over the left band alone erased the
+  // centre pixel.) Edge feathering needs 'destination-out': the source
+  // shape defines the ERASE region, so each band fill erases its own edge
+  // (opaque at the outer rim, fading to transparent inward) and the centre
+  // is never touched. The fresh-CanvasTexture construction is kept anyway
+  // (never an in-place tex.image swap).
+  function featherCanvas(img) {
     const cv = document.createElement('canvas');
     cv.width = img.width; cv.height = img.height;
     const g = cv.getContext('2d');
     g.drawImage(img, 0, 0);
-    const fw = Math.round(img.width * 0.12);
-    g.globalCompositeOperation = 'destination-in';
+    const fw = Math.round(img.width * 0.22);
+    const fh = Math.round(img.height * 0.18);
+    g.globalCompositeOperation = 'destination-out';
+    // left edge: erase from the rim (opaque) fading inward (transparent)
     const gradL = g.createLinearGradient(0, 0, fw, 0);
-    gradL.addColorStop(0, 'rgba(0,0,0,0)');
-    gradL.addColorStop(1, 'rgba(0,0,0,1)');
+    gradL.addColorStop(0, 'rgba(0,0,0,1)');
+    gradL.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gradL;
     g.fillRect(0, 0, fw, img.height);
     const gradR = g.createLinearGradient(img.width, 0, img.width - fw, 0);
-    gradR.addColorStop(0, 'rgba(0,0,0,0)');
-    gradR.addColorStop(1, 'rgba(0,0,0,1)');
+    gradR.addColorStop(0, 'rgba(0,0,0,1)');
+    gradR.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gradR;
     g.fillRect(img.width - fw, 0, fw, img.height);
+    const gradT = g.createLinearGradient(0, 0, 0, fh);
+    gradT.addColorStop(0, 'rgba(0,0,0,1)');
+    gradT.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gradT;
+    g.fillRect(0, 0, img.width, fh);
+    const gradB = g.createLinearGradient(0, img.height, 0, img.height - fh);
+    gradB.addColorStop(0, 'rgba(0,0,0,1)');
+    gradB.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gradB;
+    g.fillRect(0, img.height - fh, img.width, fh);
     g.globalCompositeOperation = 'source-over';
-    tex.image = cv;
-    tex.needsUpdate = true;
+    return cv;
   }
-  const backdropTex = BACKDROP_FILES.map((f) => {
+  // Each entry starts as the TextureLoader texture (so the mesh has a map
+  // immediately) and is REPLACED in onLoad by a fresh feathered
+  // CanvasTexture. backdropsReady() counts onLoad calls, so a shot never
+  // fires before every vista is feathered. update() swaps a staged mesh's
+  // map if its entry changed after the mesh was built.
+  const backdropTex = BACKDROP_FILES.map((f, i) => {
     if (!f) return null;
-    const t = new THREE.TextureLoader().load(f, texDone, undefined, texFail(f));
+    const t = new THREE.TextureLoader().load(f, (tex) => {
+      const ft = new THREE.CanvasTexture(featherCanvas(tex.image));
+      ft.colorSpace = THREE.SRGBColorSpace;
+      backdropTex[i] = ft;
+      tex.dispose();
+      texDone();
+    }, undefined, texFail(f));
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   });
   let backdropMesh = null;
+  let backdropStageIdx = -1;
   function setBackdrop(stageIdx) {
     if (backdropMesh) { scene.remove(backdropMesh); backdropMesh = null; }
     const tex = backdropTex[stageIdx];
     if (!tex) return;
     // Flat rectangular vista, far behind the arena (never a stretched
-    // scene.background): 190m wide at z=-72, centred y=19, height matched
-    // to the image aspect so the vista fills the frame edge to edge.
-    // (First pass used 120x58 — its edges showed as a hard seam across
-    // the sky, and the cover read as "a picture taped to the sky".)
-    const h = 190 / BACKDROP_ASPECT[stageIdx];
+    // scene.background). Fix round 2 (B): widened 190 -> 240, height x1.15
+    // (aspect-matched, so no distortion), pushed deeper to z=-95, centre
+    // y=21 — the edges fall outside the playshot frustum.
+    const h = (240 / BACKDROP_ASPECT[stageIdx]) * 1.15;
     backdropMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(190, h),
+      new THREE.PlaneGeometry(240, h),
       new THREE.MeshBasicMaterial({ map: tex, fog: false, transparent: true }),
     );
-    backdropMesh.position.set(0, 19, -72);
+    backdropMesh.position.set(0, 21, -95);
+    backdropStageIdx = stageIdx;
     scene.add(backdropMesh);
   }
 
@@ -660,9 +748,15 @@ export function createRenderer(canvas, kingTextureUrl) {
   let stageDecor = [];
   let groundTex = null;
   let skyTex = null;
+  // Fix round 2 (A): brazier flame materials + positions, so update() can
+  // boost the flames and park the brazier light in cover mode only.
+  let brazierFlameMats = [];
+  let brazierPositions = [];
   function setStageDecor(stageIdx) {
     for (const m of stageDecor) { decorGroup.remove(m); }
     stageDecor = [];
+    brazierFlameMats = [];
+    brazierPositions = [];
     const stage = STAGES[stageIdx];
     const rng = mulberry32(0xC0FFEE + stageIdx * 1013);
     // sky gradient + fog from the stage palette; ground texture rebuilt
@@ -671,7 +765,28 @@ export function createRenderer(canvas, kingTextureUrl) {
     skyTex = makeSkyTexture(stage);
     scene.background = skyTex;
     scene.fog.color = hex(stage.sky[0]);
+    // Fix round 2 (B, Gemini): Stage 4 fog blends the horizon into deep
+    // sapphire-indigo (near 65, far 195) so the backdrop edge has nowhere
+    // sharp to show. The scene.background is NOT replaced with a flat
+    // colour (Gemini's literal instruction) — it is the sky-gradient
+    // texture, and flattening it would kill the nebula sky.
+    if (stageIdx === 3) {
+      scene.fog.color.setHex(0x1b244a);
+      scene.fog.near = 65;
+      scene.fog.far = 195;
+    } else {
+      scene.fog.near = 55;
+      scene.fog.far = 110;
+    }
     ambient.color = hex(stage.sky[1]);
+    // Fix round 2 (A, Gemini): warm hemisphere bounce per stage.
+    if (stageIdx === 5) {
+      hemi.color.setHex(0xffb870); hemi.groundColor.setHex(0x6e4a5e); hemi.intensity = 1.15;
+    } else if (stageIdx === 3) {
+      hemi.color.setHex(0x7ce8ff); hemi.groundColor.setHex(0x3d356b); hemi.intensity = 1.10;
+    } else {
+      hemi.color.setHex(0xffe8c8); hemi.groundColor.setHex(0x5a4a5e); hemi.intensity = 0.6;
+    }
     if (groundTex) groundTex.dispose();
     groundTex = makeGroundTexture(stage, mulberry32(0x6A5510 + stageIdx * 331));
     groundMesh.material.map = groundTex;
@@ -681,6 +796,7 @@ export function createRenderer(canvas, kingTextureUrl) {
     // braziers: a ring of burning bowls at the arena edge
     const brazierPos = [[-24, -14], [24, -14], [-24, 14], [24, 14], [-25, 0], [25, 0]];
     for (const [x, z] of brazierPos) {
+      brazierPositions.push([x, z]);
       const bowl = new THREE.Mesh(
         new THREE.CylinderGeometry(0.7, 0.4, 0.9, 8),
         new THREE.MeshStandardMaterial({ color: 0x4a3a28, roughness: 0.9, flatShading: true }),
@@ -688,9 +804,11 @@ export function createRenderer(canvas, kingTextureUrl) {
       bowl.position.set(x, 0.45, z);
       decorGroup.add(bowl);
       stageDecor.push(bowl);
+      const flameMat = new THREE.MeshStandardMaterial({ color: 0xff6a00, emissive: 0xff6a00, emissiveIntensity: 2.2, transparent: true, opacity: 0.95 });
+      brazierFlameMats.push(flameMat);
       const flame = new THREE.Mesh(
         new THREE.ConeGeometry(0.55, 1.6, 7),
-        new THREE.MeshStandardMaterial({ color: 0xff6a00, emissive: 0xff6a00, emissiveIntensity: 2.2, transparent: true, opacity: 0.95 }),
+        flameMat,
       );
       flame.position.set(x, 1.6, z);
       decorGroup.add(flame);
@@ -947,6 +1065,34 @@ export function createRenderer(canvas, kingTextureUrl) {
         chainMeshes.push(aimLine);
       }
     }
+    // Fix round 2 (C, DeepSeek Fix 1): cover-only hauling arc — a gold
+    // chain visibly leaving the King's hand and arcing up to the
+    // heart-sigil, the hero moment the cover was missing. This is a
+    // staging decal, NOT a second taut limb-chain: the sim still holds
+    // exactly one chain (HUD CHAINS 1/2), and two taut limb-chains IS the
+    // topple, so no second limb-chain can exist while Aurelius stands.
+    // The decal ends at the sigil (the slam target), not at a pin.
+    // Drawn only while the colossus marches.
+    if (camMode === 'cover') {
+      const col = nearestColossus(state);
+      if (col && col.state === 'march') {
+        const g = colossusMeshes.get(col.id);
+        if (g) {
+          const sigilPos = new THREE.Vector3();
+          g.userData.sigil.getWorldPosition(sigilPos);
+          const [kx, kz] = stagedKingPos(state);
+          const hand = new THREE.Vector3(kx, k.y + 1.3, kz);
+          const mid = new THREE.Vector3().addVectors(hand, sigilPos).multiplyScalar(0.5);
+          chainMeshes.push(chainCylinder(hand, mid, chainTautMat));
+          chainMeshes.push(chainCylinder(mid, sigilPos, chainTautMat));
+          for (const m of chainMeshes.slice(-2)) chainGroup.add(m);
+          const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), chainTautMat);
+          ball.position.copy(hand);
+          chainGroup.add(ball);
+          chainMeshes.push(ball);
+        }
+      }
+    }
   }
 
   // ---- HUD ----
@@ -1011,10 +1157,34 @@ export function createRenderer(canvas, kingTextureUrl) {
   // at ~12-17% in the lower foreground, crown and red robe clear against
   // the dark stone. The look is shifted +2.5 in x so the King sits in the
   // left third.
+  // Fix round 2 (C): in cover mode the King is staged in front of the
+  // colossus's legs, centred under the heart-sigil (x = colossus.x,
+  // z = colossus.z + 2), instead of standing between the legs where the
+  // legs occlude him. Returns [kx, kz]. ("Back to camera" is not
+  // achievable: the King is a billboard sprite, it always faces the camera
+  // — his front, crown + robe readable, is what the frame shows.)
+  function stagedKingPos(state) {
+    if (camMode !== 'cover') return [state.king.x, state.king.z];
+    const col = nearestColossus(state);
+    if (!col) return [state.king.x, state.king.z];
+    return [col.x, col.z + 2];
+  }
+
+  // Fix round 2 (D): the 17% experiment switch (GLM Fix 1). 'standard' is
+  // the default framing; '17' is the closer camera + bigger sprite, run
+  // only with ?shot=cover&cover17=1. Set via setCoverVariant().
+  let coverVariant = 'standard';
+
   function coverTarget(state) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(-12, 13, 22), look: new THREE.Vector3(0, 3, 6) };
+    if (coverVariant === '17') {
+      return {
+        pos: new THREE.Vector3(k.x + 4, k.y + 5, k.z + 20),
+        look: new THREE.Vector3((k.x + col.x) / 2, 5, (k.z + col.z) / 2),
+      };
+    }
     const pos = new THREE.Vector3(k.x + 6, k.y + 7, k.z + 26);
     const look = new THREE.Vector3(col.x + 2.5, 7, col.z);
     return { pos, look };
@@ -1093,17 +1263,72 @@ export function createRenderer(canvas, kingTextureUrl) {
         input.pointer.inside = false;
       }
     }
-    // King sprite — scaled up in cover mode so he reads ~20-25% of frame
+    // King sprite — scaled up in cover mode so he reads ~10-12% of frame
     // height (he was ~8% in the old cover); normal size everywhere else.
+    // Fix round 2 (C): in cover mode he is staged in front of the legs,
+    // centred under the sigil (stagedKingPos), not between the legs.
+    // Fix round 2 (D): the 17% experiment uses 8.4x6.3 in cover mode.
     const k = state.king;
-    if (camMode === 'cover') kingSprite.scale.set(5.6, 4.2, 1);
+    const [kx, kz] = stagedKingPos(state);
+    if (camMode === 'cover') kingSprite.scale.set(coverVariant === '17' ? 8.4 : 5.6, coverVariant === '17' ? 6.3 : 4.2, 1);
     else kingSprite.scale.set(2.4, 1.8, 1);
-    kingSprite.position.set(k.x, k.y + 0.78, k.z);
+    kingSprite.position.set(kx, k.y + 0.78, kz);
     const inv = k.invuln > 0 && Math.floor(performance.now() / 120) % 2 === 0;
     kingSprite.material.opacity = inv ? 0.4 : 1;
-    kingShadow.position.set(k.x, 0.02, k.z);
+    kingShadow.position.set(kx, 0.02, kz);
     kingShadow.scale.setScalar(Math.max(0.4, 1 - k.y * 0.03));
-    kingGlow.position.set(k.x, k.y + 2, k.z);
+    kingGlow.position.set(kx, k.y + 2, kz);
+    // Fix round 2 (C, Qwen Fix 3): crown glow pops in cover mode only
+    // (intensity 20, distance 16; 12/12 elsewhere).
+    if (camMode === 'cover') { kingGlow.intensity = 20; kingGlow.distance = 16; }
+    else { kingGlow.intensity = 12; kingGlow.distance = 12; }
+    // Fix round 2 (C): gold halo behind the King, cover mode only.
+    kingHalo.visible = camMode === 'cover';
+    if (camMode === 'cover') kingHalo.position.set(kx, k.y + 2.1, kz - 0.3);
+    // Fix round 2 (A): kingLight follows the staged King; the warm fill
+    // is full-strength in the staged cover/play frames and gentle
+    // elsewhere (the title frame keeps its cave mood); the brazier light
+    // parks at the brazier nearest the King in cover mode only, and the
+    // brazier flames burn 40% hotter in the cover shot only (DeepSeek).
+    kingLight.position.set(kx + 1.5, k.y + 3.0, kz + 2.0);
+    fill.intensity = (camMode === 'cover' || camMode === 'playshot') ? 0.55 : 0.25;
+    if (camMode === 'cover' && brazierPositions.length) {
+      let best = null; let bd = Infinity;
+      for (const [bx, bz] of brazierPositions) {
+        const d = (bx - kx) * (bx - kx) + (bz - kz) * (bz - kz);
+        if (d < bd) { bd = d; best = [bx, bz]; }
+      }
+      brazierLight.position.set(best[0], 1.6, best[1]);
+      brazierLight.intensity = 2.5;
+      for (const m of brazierFlameMats) m.emissiveIntensity = 3.1;
+    } else {
+      brazierLight.intensity = 0;
+      for (const m of brazierFlameMats) m.emissiveIntensity = 2.2;
+    }
+    // Fix round 2 (B): a staged mesh whose texture entry was replaced by
+    // the feathered CanvasTexture after the mesh was built gets the new
+    // map; and in staged modes the backdrop plane faces the staged camera
+    // (lookAt) so its edges fall outside the frustum. Live play keeps the
+    // fixed plane — a billboard vista would look wrong under a moving
+    // follow camera.
+    if (backdropMesh && backdropStageIdx >= 0) {
+      const tex = backdropTex[backdropStageIdx];
+      if (tex && backdropMesh.material.map !== tex) {
+        backdropMesh.material.map = tex;
+        backdropMesh.material.needsUpdate = true;
+      }
+      if (camMode === 'cover' || camMode === 'playshot' || camMode === 'victory' || camMode === 'title') {
+        backdropMesh.lookAt(camera.position.x, backdropMesh.position.y, camera.position.z);
+      }
+    }
+    // Fix round 2 (D): measurement aid — the King's projected frame height
+    // in cover mode, so the 10-12% vs 17% experiment is a number, not an
+    // eye. FOV 50 deg vertical, viewport 720px.
+    if (camMode === 'cover') {
+      const dist = camera.position.distanceTo(kingSprite.position);
+      const hPx = kingSprite.scale.y * 360 / (Math.tan(THREE.MathUtils.degToRad(25)) * dist);
+      window.__kingFramePct = (hPx / 720) * 100;
+    }
     // altar gem pulse
     altarGem.rotation.y += dt * 2;
     altarGem.position.y = 3.6 + Math.sin(performance.now() / 500) * 0.15;
@@ -1119,6 +1344,7 @@ export function createRenderer(canvas, kingTextureUrl) {
   return {
     update,
     setStage,
+    setCoverVariant(v) { coverVariant = v; },
     backdropsReady() { return texLoaded >= texTotal; },
     setCamMode(m, state) {
       camMode = m;
