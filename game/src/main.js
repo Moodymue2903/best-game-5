@@ -239,6 +239,19 @@ function stageShot() {
       guard += 1;
     }
     if (state.screen === 'win') showEnd(true);
+    // Fix round 4 (DeepSeek camera (b), SHOT ONLY): move the win overlay's
+    // content out of the King's way so the upper two-thirds of the frame
+    // is King + crown + fallen Titan. The title sits near the top
+    // (padding-top 190px, below the HUD); the stats box + PLAY AGAIN are
+    // pushed to the bottom third (margin-top auto on #win-stats, stats
+    // background 0.75). This runs only in the ?shot=victory branch —
+    // live play's win screen is untouched.
+    if (state.screen === 'win') {
+      overlays.win.style.justifyContent = 'flex-start';
+      overlays.win.style.paddingTop = '190px';
+      overlays.winStats.style.marginTop = 'auto';
+      overlays.winStats.style.background = 'rgba(16,37,94,0.75)';
+    }
     // Fix round 3: stage the WIN stage's decor (stage 6 citadel). The
     // victory branch never called setStage, so the renderer was still
     // showing the STAGE-1 crystal-cave decor from init — one of those

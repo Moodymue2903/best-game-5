@@ -96,6 +96,19 @@ export function createRenderer(canvas, kingTextureUrl) {
   scene.add(fallenFill);
   const victoryTitanLight = new THREE.PointLight(0xffb703, 0, 30, 2);
   scene.add(victoryTitanLight);
+  // Fix round 4: rim backlight behind the fallen body in the play shot
+  // (Qwen Fix 2, one attempt). Starts at 0 and is gated per camMode in
+  // update() like the other staging lights — visible=false at 0, so live
+  // play lighting and the SwiftShader frame rate are untouched.
+  const fallenRim = new THREE.DirectionalLight(0xffd43b, 0);
+  fallenRim.position.set(-14, 10, -18);
+  scene.add(fallenRim);
+  // Fix round 4: victory King sprite scale (width, height). Start at
+  // Qwen's 4.6x3.45 and raise toward GLM's 7.2x5.4 until the victory King
+  // reads >=70 px. Used by the victory scale set AND by stagedKingY (feet
+  // = crown top + 0.46 * height) AND by the victory shadow offset, so the
+  // three can never drift apart.
+  const VICTORY_KING_SCALE = [4.6, 3.45];
 
   // ---- ground: procedural warm stone tiles (Fix: the bare dark grid) ----
   const groundMesh = new THREE.Mesh(
@@ -559,16 +572,26 @@ export function createRenderer(canvas, kingTextureUrl) {
       eye.position.set(side * 0.48 * s, 9.65 * s, 1.02 * s);
       body.add(eye);
     }
+    // Fix round 4: crown + spikes in one group (scaled 1.4x in victory
+    // mode only) and exposed as userData.crown so the victory King can
+    // anchor his feet on the crown itself. The group sits at the crown
+    // centre (0, 10.7*s, 0); the crown mesh inside it is at local (0,0,0)
+    // and the spikes at +0.7*s, exactly as before.
+    let crown = null;
+    let crownGroup = null;
     if (col.boss) {
-      const crown = new THREE.Mesh(new THREE.CylinderGeometry(1.3 * s, 1.5 * s, 0.9 * s, 8), goldMat);
-      crown.position.set(0, 10.7 * s, 0);
-      body.add(crown);
+      crownGroup = new THREE.Group();
+      crownGroup.position.set(0, 10.7 * s, 0);
+      crown = new THREE.Mesh(new THREE.CylinderGeometry(1.3 * s, 1.5 * s, 0.9 * s, 8), goldMat);
+      crown.material = goldMat.clone(); // victory emissive boost must not touch other gold meshes
+      crownGroup.add(crown);
       for (let i = 0; i < 5; i += 1) {
         const a = (i / 5) * Math.PI * 2;
         const spike = new THREE.Mesh(new THREE.ConeGeometry(0.22 * s, 0.8 * s, 6), goldMat);
-        spike.position.set(Math.cos(a) * 1.3 * s, 11.4 * s, Math.sin(a) * 1.3 * s);
-        body.add(spike);
+        spike.position.set(Math.cos(a) * 1.3 * s, 0.7 * s, Math.sin(a) * 1.3 * s);
+        crownGroup.add(spike);
       }
+      body.add(crownGroup);
     }
     // --- glowing teal crystals embedded in the stone ---
     const crystals = [
@@ -626,7 +649,7 @@ export function createRenderer(canvas, kingTextureUrl) {
       body.add(shield);
     }
     g.position.set(col.x, 0, col.z);
-    g.userData = { body, sigil, pinMeshes, shield, size: s };
+    g.userData = { body, sigil, pinMeshes, shield, size: s, crown, crownGroup };
     scene.add(g);
     return g;
   }
@@ -1033,6 +1056,13 @@ export function createRenderer(canvas, kingTextureUrl) {
       ud.body.position.y = walk;
       ud.body.rotation.z = col.state === 'march' ? Math.sin(col.walkPhase * 6) * 0.04 : 0;
       // topple: fall forward (rotate about the base, lying toward +z)
+      // Fix round 4 (GLM Fix A3): 45-degree Y roll when toppled in the
+      // playshot ONLY — the body's cross-section rolls so the limbs
+      // separate from the torso in projection. 90 deg was rejected in
+      // round 3 (it swings the sigil off the King's vault arc); 45 deg is
+      // the middle ground. Gated on playshot so live play and the victory
+      // Titan are untouched.
+      ud.body.rotation.y = (col.state === 'toppled' && camMode === 'playshot') ? Math.PI / 4 : 0;
       const targetRot = col.state === 'toppled' ? -Math.PI / 2 : 0;
       ud.body.rotation.x += (targetRot - ud.body.rotation.x) * 0.25;
       // shattered: sink + shrink — EXCEPT in victory mode, where the shot
@@ -1046,7 +1076,10 @@ export function createRenderer(canvas, kingTextureUrl) {
         if (camMode === 'victory') {
           g.scale.setScalar(1);
           g.position.y = 0;
-          ud.body.rotation.x = -Math.PI / 2;
+          // Fix round 4 (Qwen Fix 1): tilt the fallen Titan 12.6 deg so
+          // the head/crown end lifts toward the camera and the spikes show.
+          // The playshot topple stays exactly -PI/2.
+          ud.body.rotation.x = -Math.PI / 2 + 0.22;
         } else {
           g.scale.setScalar(Math.max(0.05, g.scale.x - 0.06));
           g.position.y -= 0.12;
@@ -1055,14 +1088,27 @@ export function createRenderer(canvas, kingTextureUrl) {
         g.scale.setScalar(1);
         g.position.y = 0;
       }
+      // Fix round 4 (GLM Fix B): crown emphasis in victory mode only —
+      // 1.4x scale and emissive 1.5 so the crown reads behind/under the
+      // King. The crown material is a per-crown clone (buildColossus), so
+      // no other gold mesh is touched. Live play never sees 'victory'.
+      if (ud.crownGroup) {
+        const vic = camMode === 'victory';
+        ud.crownGroup.scale.setScalar(vic ? 1.4 : 1);
+        if (ud.crown) ud.crown.material.emissiveIntensity = vic ? 1.5 : 0.25;
+      }
       // sigil: pulse, dim as hp falls — but never below 1.5 while the
       // body lies toppled (fix round 3: the sigil is the fallen giant's
       // readable landmark in the play frame). In victory mode the frozen
       // Titan is in the toppled pose too, so the floor applies there.
+      // The floor is 1.8 while toppled in the playshot (fix round 4, GLM
+      // Fix A4: 1.8 is the visible-sigil threshold at thumbnail; 1.5 was
+      // tried in round 3). The victory-shattered sigil keeps its 1.5.
       const sigilFrac = col.sigilHp / col.sigilMax;
       const sigilLit = 0.8 + sigilFrac * 1.2 + Math.sin(performance.now() / 300) * 0.3;
+      const sigilFloor = (col.state === 'toppled' && camMode === 'playshot') ? 1.8 : 1.5;
       ud.sigil.material.emissiveIntensity = (col.state === 'toppled' || (camMode === 'victory' && col.state === 'shattered'))
-        ? Math.max(1.5, sigilLit) : sigilLit;
+        ? Math.max(sigilFloor, sigilLit) : sigilLit;
       ud.sigil.scale.setScalar(0.7 + sigilFrac * 0.5);
       // pins: colour by state
       for (const p of col.pins) {
@@ -1229,7 +1275,16 @@ export function createRenderer(canvas, kingTextureUrl) {
   // feet, so a close camera (9-19m) makes Aurelius overflow the frame and
   // read as abstract dark pillars — his head out of shot, his torso a
   // wall. This pass pulls back to 26m at height 7, level on the colossus's
-  // mid-height (look y 7): Aurelius fits whole (feet to crown, ~58% of
+  // mid-height (look y 7.6, fix round 4): Qwen Fix 3 said 7 -> 6.4, but
+  // the 6.4 probe moved the crown NOWHERE (still ~10 px from the top,
+  // same as round 3) — lowering the look tilts the camera down, which
+  // pushes the crown UP, the wrong direction for headroom. Raising the
+  // look pushes the crown DOWN into the frame: the 8.5 probe put the
+  // crown spikes at ~60 px (clear) but pushed the King to the bottom
+  // edge (feet 704). 7.6 is the middle: crown spikes ~25 px from the
+  // top, King feet ~673, King still ~110 px. (Probe-calibrated: the
+  // King's projected feet move ~34 px per 1.0 of look; the crown moves
+  // with it.)
   // frame height, a readable towering character, ref12) and the King reads
   // at ~12-17% in the lower foreground, crown and red robe clear against
   // the dark stone. The look is shifted +2.5 in x so the King sits in the
@@ -1241,12 +1296,12 @@ export function createRenderer(canvas, kingTextureUrl) {
   // him in the left third. ("Back to camera" is not achievable: the King
   // is a billboard sprite, it always faces the camera — his front, crown
   // + robe readable, is what the frame shows.)
-  // Victory — the King stands ON the fallen Titan's chest, at the sigil
-  // (see stagedKingY). The body provably lies toward -z (sigil math +
-  // probe: the chest lands at z = col.z - 5.6 for the size-14 topple), so
-  // col.z+2 sits 2 m past the feet, OFF the body, and would float him in
-  // the air. The sigil IS the chest's top surface at any size, so it is
-  // the self-calibrating anchor; the fallback is 9 m up the body.
+  // Victory — the King stands ON the fallen Titan's CROWN (fix round 4,
+  // Qwen Fix 1; see stagedKingY). The body provably lies toward -z, so
+  // the crown (local y 10.7, the head end) lands ~10.7 m up the body at
+  // z = col.z - 10.7, tilted 0.22 up in victory mode. The crown IS the
+  // self-calibrating anchor (its world position, via getWorldPosition);
+  // the fallback is the chest sigil, then 12 m up the body.
   function stagedKingPos(state) {
     const col = nearestColossus(state);
     if (!col) return [state.king.x, state.king.z];
@@ -1255,17 +1310,29 @@ export function createRenderer(canvas, kingTextureUrl) {
       const g = colossusMeshes.get(col.id);
       if (g) {
         const sp = new THREE.Vector3();
+        // Fix round 4: anchor to the CROWN, not the chest sigil — the King
+        // stands ON the crown (Qwen Fix 1). The crown mesh's world position
+        // is its centre; stagedKingY lifts the feet to the crown's top
+        // surface. Fall back to the sigil, then to 12 m up the body (the
+        // crown lies farther -z than the chest's -5.6).
+        if (g.userData.crown) {
+          g.userData.crown.getWorldPosition(sp);
+          return [sp.x, sp.z];
+        }
         g.userData.sigil.getWorldPosition(sp);
         return [sp.x, sp.z];
       }
-      return [col.x, col.z - 9];
+      return [col.x, col.z - 12];
     }
     return [state.king.x, state.king.z];
   }
   // Staged King height (sprite centre): cover/play follow the sim King;
-  // victory puts his feet on the fallen Titan's chest (sigil height + the
-  // sprite's half-height to the ape's feet: 0.46 * the 2.4 victory scale
-  // = 1.11).
+  // victory puts his feet on the fallen Titan's CROWN (fix round 4: the
+  // crown anchor, not the chest sigil). Feet = crown-top height + the
+  // sprite's half-height to the ape's feet (0.46 * the victory scale
+  // height). The crown is a horizontal tube once the body lies flat, so
+  // its top surface is its centre + its radius (1.5 * size, x1.4 for the
+  // victory crown emphasis).
   function stagedKingY(state) {
     const k = state.king;
     if (camMode !== 'victory') return k.y + 0.78;
@@ -1274,8 +1341,13 @@ export function createRenderer(canvas, kingTextureUrl) {
       const g = colossusMeshes.get(col.id);
       if (g) {
         const sp = new THREE.Vector3();
+        if (g.userData.crown) {
+          g.userData.crown.getWorldPosition(sp);
+          const s = g.userData.size || 1;
+          return sp.y + 1.5 * s * 1.4 + 0.46 * VICTORY_KING_SCALE[1];
+        }
         g.userData.sigil.getWorldPosition(sp);
-        return sp.y + 1.11;
+        return sp.y + 0.46 * VICTORY_KING_SCALE[1];
       }
     }
     return k.y + 0.78;
@@ -1290,7 +1362,7 @@ export function createRenderer(canvas, kingTextureUrl) {
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(-12, 13, 22), look: new THREE.Vector3(0, 3, 6) };
     const pos = new THREE.Vector3(k.x + 6, k.y + 7, k.z + 26);
-    const look = new THREE.Vector3(col.x + 2.5, 7, col.z);
+    const look = new THREE.Vector3(col.x + 2.5, 7.6, col.z);
     return { pos, look };
   }
 
@@ -1312,6 +1384,12 @@ export function createRenderer(canvas, kingTextureUrl) {
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(k.x + 7, 3, k.z + 10), look: new THREE.Vector3(k.x, k.y + 2, k.z - 4) };
     const pos = new THREE.Vector3(k.x + 13, 4.5, k.z + 7);
+    // Fix round 4 (GLM Fix A, look): REVERTED — looking down at the fallen
+    // body's midsection (col.x, 1.5, col.z) pushed the King to the top of
+    // the frame (overlapping COMBOS) and the giant off the right edge, and
+    // broke the vault/sigil read (probe, fix round 4). The midpoint look
+    // is restored; the 45-degree roll and the rim light are kept for a
+    // separate read.
     const look = new THREE.Vector3((k.x + col.x) / 2, 3.5, (k.z + col.z) / 2);
     return { pos, look };
   }
@@ -1325,19 +1403,37 @@ export function createRenderer(canvas, kingTextureUrl) {
   // box / PLAY AGAIN button (the DOM covers y 230-530), so the King was
   // invisible. A closer, lower camera (k.x+5, k.y+10, k.z+14) made the
   // King bigger in principle but put the Titan's own gold torso trim
-  // between the camera and the King, hiding him again. This high camera
-  // looks down past the trim: the Titan, the King on its chest (~40 px)
-  // and the crown all sit in the lower third (y 560-690), clear of the
-  // button, with the castle vista and the win text in the upper two
-  // thirds. The Titan's feet run off the bottom edge — the body reads as
-  // a looming fallen mass, which is what the win screen wants; the play
-  // frame is the one that must prove the giant reads as a figure.
+  // between the camera and the King, hiding him again. The high camera
+  // (k.x+6, k.y+20, k.z+18) looked down past the trim: the Titan, the
+  // King on its chest (~40 px) and the crown all sat in the lower third
+  // (y 560-690), clear of the button — but the King was a speck at
+  // thumbnail scale, which is what fix round 4 attacks.
+  // Fix round 4 (Qwen Fix 1, camera (a)): a lower, closer camera
+  // (k.x+6, k.y+16, k.z+16) with the look biased toward the crown end,
+  // so the King — now standing ON the crown at 4.6x3.45 — lands in the
+  // lower-left third, below the stats box. If he is still <60 px or not
+  // legible at 320 px, the fallbacks are DeepSeek's lower camera
+  // (k.x+3, k.y+5, k.z+6) with the stats overlay moved to the bottom
+  // third, then GLM's (k.x+4, k.y+14, k.z+12).
   function victoryTarget(state) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(k.x + 6, 4, k.z + 12), look: new THREE.Vector3(k.x, 2, k.z - 4) };
-    const pos = new THREE.Vector3(k.x + 6, k.y + 20, k.z + 18);
-    const look = new THREE.Vector3((k.x + col.x) / 2, 18, (k.z + col.z) / 2 - 6);
+    const pos = new THREE.Vector3(k.x + 3, k.y + 5, k.z + 6);
+    // Fix round 4 (DeepSeek camera (b)): a low, close camera looking UP
+    // at the King on the crown — the best of the three tried. Camera (a)
+    // (Qwen: k.x+6, k.y+16, k.z+16) put the King at 62.6 px directly
+    // behind the PLAY AGAIN button. Camera (c) (GLM: k.x+4, k.y+14,
+    // k.z+12, same look as (a)) gave a 71.9 px King at (757, 447-519)
+    // whose feet touch the stats box top and whose crown is half-hidden
+    // behind it, with the Titan mostly out of the bottom of the frame.
+    // (b) gives an 85 px King at (641, 295-380), clear of the title
+    // above and the stats box (moved to the bottom third) below, the
+    // crown under his feet and the fallen Titan mass in frame. The look
+    // is the staged King's centre (crown anchor).
+    const [kx, kz] = stagedKingPos(state);
+    const ky = stagedKingY(state);
+    const look = new THREE.Vector3(kx, ky, kz);
     return { pos, look };
   }
 
@@ -1399,19 +1495,25 @@ export function createRenderer(canvas, kingTextureUrl) {
     // Titan instead of alone on the floor.
     const ky = stagedKingY(state);
     if (camMode === 'cover') kingSprite.scale.set(6.8, 5.1, 1);
-    else if (camMode === 'victory') kingSprite.scale.set(3.2, 2.4, 1);
+    else if (camMode === 'victory') kingSprite.scale.set(VICTORY_KING_SCALE[0], VICTORY_KING_SCALE[1], 1);
     else kingSprite.scale.set(2.4, 1.8, 1);
     kingSprite.position.set(kx, ky, kz);
     const inv = k.invuln > 0 && Math.floor(performance.now() / 120) % 2 === 0;
     kingSprite.material.opacity = inv ? 0.4 : 1;
     // Fix round 3: in victory mode the shadow sits on the Titan's chest
     // under the King (feet level), not on the floor 4 m below him.
-    kingShadow.position.set(kx, camMode === 'victory' ? ky - 1.09 : 0.02, kz);
+    // Fix round 4: the feet level is the crown top, 0.46 * the victory
+    // scale height below the sprite centre (was the hard-coded 1.09 for
+    // the old 2.4 scale).
+    kingShadow.position.set(kx, camMode === 'victory' ? ky - 0.46 * VICTORY_KING_SCALE[1] : 0.02, kz);
     kingShadow.scale.setScalar(Math.max(0.4, 1 - k.y * 0.03));
     kingGlow.position.set(kx, ky + 1.2, kz);
     // Fix round 2 (C, Qwen Fix 3): crown glow pops in cover mode only
     // (intensity 20, distance 16; 12/12 elsewhere).
+    // Fix round 4 (Qwen Fix 1): 18/14 in victory mode too, so the crowned
+    // King reads on the fallen Titan.
     if (camMode === 'cover') { kingGlow.intensity = 20; kingGlow.distance = 16; }
+    else if (camMode === 'victory') { kingGlow.intensity = 18; kingGlow.distance = 14; }
     else { kingGlow.intensity = 12; kingGlow.distance = 12; }
     // Fix round 2 (C): gold halo behind the King, cover mode only.
     // Fix round 3: 9x9, opacity 0.65, centred on the King (ky + 1.3 is
@@ -1449,11 +1551,19 @@ export function createRenderer(canvas, kingTextureUrl) {
         fallenFill.position.set(fallen.x + 5, 8, fallen.z + 5);
         fallenFill.intensity = 0.8;
         fallenFill.visible = true;
+        // Fix round 4 (Qwen Fix 2, one attempt): rim backlight behind the
+        // fallen body relative to the +x/+z playshot camera, so the body's
+        // outline separates from the floor. Same visible=false-at-0 rule
+        // as the other staging lights (the round-3 SwiftShader lesson).
+        fallenRim.intensity = 1.6;
+        fallenRim.visible = true;
       } else {
         fallenLight.intensity = 0;
         fallenLight.visible = false;
         fallenFill.intensity = 0;
         fallenFill.visible = false;
+        fallenRim.intensity = 0;
+        fallenRim.visible = false;
       }
       if (camMode === 'victory' && col) {
         victoryTitanLight.position.set(col.x, 6, col.z - 6);
