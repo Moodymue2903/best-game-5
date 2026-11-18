@@ -6,9 +6,11 @@
 //             chain, HUD CHAINS 1/2 — two taut limb-chains IS the topple,
 //             so no second limb-chain exists while Aurelius stands),
 //             castle backdrop, CROWNBOUND wordmark top-left
-//   play    — stage 4 Ringed Moon Observatory: the King caught EARLY in the
-//             vault (vaultT 0.35-0.45, ~6m up), King, fallen giant and sigil
-//             sharing the frame under the nebula
+//   play    — stage 4 Ringed Moon Observatory: the King hauling a taut
+//             gold chain at the UPRIGHT colossus (fix round 5 mid-haul
+//             swap — the old vault frame showed the fallen giant as
+//             rubble, a build cap; the upright colossus reads as a figure
+//             and the taut chain makes the haul verb visible)
 //   title   — the title screen over the crystal cave (unchanged)
 //   victory — the win screen after a full autopilot victory; the King stands
 //             in the left third, clear of the PLAY AGAIN button, stats box

@@ -109,6 +109,14 @@ export function createRenderer(canvas, kingTextureUrl) {
   // = crown top + 0.46 * height) AND by the victory shadow offset, so the
   // three can never drift apart.
   const VICTORY_KING_SCALE = [4.6, 3.45];
+  // Fix round 5: cover King sprite scale (width, height). Round 4's 6.8x5.1
+  // with the sprite centre at k.y+0.78 buried his feet 1.57 m under the
+  // floor (feet = ky - 0.46*height) — the probe measured screen projection,
+  // not occlusion, and missed it. With feet on the ground the full sprite
+  // shows: 5.1 tall projects to ~163 px (22.6%), far over the 11-13% band,
+  // so the scale drops to ~95 px visible. Shared by the scale set AND by
+  // stagedKingY (feet = 0.46 * height), so the two can never drift apart.
+  const COVER_KING_SCALE = [4.0, 3.0];
 
   // ---- ground: procedural warm stone tiles (Fix: the bare dark grid) ----
   const groundMesh = new THREE.Mesh(
@@ -494,7 +502,7 @@ export function createRenderer(canvas, kingTextureUrl) {
       foot.position.set(side * 1.15 * s, 0.18 * s, 0.35 * s);
       body.add(foot);
     }
-    // --- torso: 7 irregular stone chunks fused at angles ---
+    // --- torso: irregular stone chunks fused at angles ---
     const torsoChunks = [
       [2.3, 0, 5.9, 0, 0, 0, 1.25, 1.45, 0.85, stoneMat],
       [1.4, -1.7, 7.3, 0.2, 0, 0.4, 1, 1, 1, stoneLightMat],
@@ -503,6 +511,15 @@ export function createRenderer(canvas, kingTextureUrl) {
       [1.3, 2.1, 5.2, -0.3, 0, 0.5, 1, 1, 1, stoneLightMat],
       [1.5, 0.3, 4.1, 0.2, 0, 0.2, 1, 1, 1, stoneMat],
       [1.6, -0.3, 6.0, -0.9, 0, 0, 1.3, 1.2, 0.6, stoneMat],
+      // Fix round 5: belly slab — the chunks taper to a point at y≈2.6
+      // while the thighs only reach y≈3.45 at x=±1.15, so the centreline
+      // between chest and legs showed bare backdrop (the user: "where is
+      // the mid body?"). One fused chunk fills the mid-torso. Cheap: one
+      // mesh, existing stoneMat, no new lights/textures (the live playtest
+      // sim time is exactly 3.0 — zero margin for fragment work).
+      // Visual-only: no hitbox, pin, sigil or sim change; it rotates with
+      // the body when toppled, so the fallen giant gains mass too.
+      [2.0, 0, 4.3, 0.2, 0, 0, 0, 1.4, 1.05, 0.75, stoneMat],
     ];
     for (const [r, x, y, z, rx, ry, rz, sx, sy, sz, mat] of torsoChunks) {
       body.add(chunk(rng, new THREE.DodecahedronGeometry(r * s, 0), mat, x * s, y * s, z * s, rx, ry, rz, sx, sy, sz));
@@ -1190,7 +1207,10 @@ export function createRenderer(canvas, kingTextureUrl) {
           const sigilPos = new THREE.Vector3();
           g.userData.sigil.getWorldPosition(sigilPos);
           const [kx, kz] = stagedKingPos(state);
-          const hand = new THREE.Vector3(kx, k.y + 1.3, kz);
+          // Fix round 5: the hand must track the STAGED King (ky), not the
+          // sim King — the staged King now stands on the ground at ky =
+          // 0.46*3.0, so k.y+1.3 would start the arc at his belly.
+          const hand = new THREE.Vector3(kx, stagedKingY(state) + 0.35, kz);
           const mid = new THREE.Vector3().addVectors(hand, sigilPos).multiplyScalar(0.5);
           // Fix round 3: the arc bulges up and toward the King (he stands
           // left of the centreline now), so it reads as a diagonal haul
@@ -1306,6 +1326,14 @@ export function createRenderer(canvas, kingTextureUrl) {
     const col = nearestColossus(state);
     if (!col) return [state.king.x, state.king.z];
     if (camMode === 'cover') return [col.x - 3.8, col.z + 4.5];
+    // Fix round 5 (mid-haul swap): in playshot, stage the King clear of
+    // the colossus's footprint. The sim King stands at the colossus's
+    // feet, inside the belly/leg silhouette, so every camera angle
+    // occludes him behind the body (the first mid-haul frame proved it:
+    // a 60px ape half-hidden behind a leg slab). Right-front of the
+    // colossus, on the floor, beside the taut chain's path — the same
+    // class of staging as the cover's (col.x-3.8, col.z+4.5).
+    if (camMode === 'playshot') return [col.x + 6, col.z + 4];
     if (camMode === 'victory') {
       const g = colossusMeshes.get(col.id);
       if (g) {
@@ -1335,6 +1363,13 @@ export function createRenderer(canvas, kingTextureUrl) {
   // victory crown emphasis).
   function stagedKingY(state) {
     const k = state.king;
+    // Fix round 5: cover — feet exactly ON the ground plane. The staged
+    // King stands at (col.x-3.8, col.z+4.5) on the arena floor (y=0); the
+    // old k.y+0.78 put his feet 1.57 m under the floor and the floor cut
+    // him in half (the user: "the monkey King is half under the ground").
+    // Ground-based, not sim-based: the sim King is on the ground (k.y=0)
+    // at the cover catch, but the staged height must not depend on his hop.
+    if (camMode === 'cover') return 0.46 * COVER_KING_SCALE[1];
     if (camMode !== 'victory') return k.y + 0.78;
     const col = nearestColossus(state);
     if (col) {
@@ -1383,14 +1418,15 @@ export function createRenderer(canvas, kingTextureUrl) {
     const k = state.king;
     const col = nearestColossus(state);
     if (!col) return { pos: new THREE.Vector3(k.x + 7, 3, k.z + 10), look: new THREE.Vector3(k.x, k.y + 2, k.z - 4) };
-    const pos = new THREE.Vector3(k.x + 13, 4.5, k.z + 7);
-    // Fix round 4 (GLM Fix A, look): REVERTED — looking down at the fallen
-    // body's midsection (col.x, 1.5, col.z) pushed the King to the top of
-    // the frame (overlapping COMBOS) and the giant off the right edge, and
-    // broke the vault/sigil read (probe, fix round 4). The midpoint look
-    // is restored; the 45-degree roll and the rim light are kept for a
-    // separate read.
-    const look = new THREE.Vector3((k.x + col.x) / 2, 3.5, (k.z + col.z) / 2);
+    // Fix round 5 (mid-haul swap): frame the STAGED King and the upright
+    // colossus together. The vault camera (k.x+13, 4.5, k.z+7, look y=3.5)
+    // stood too close and too low for the upright giant: his head and
+    // crown were cut at the top edge and the King was occluded by the
+    // body. Pull back and up, look at mid-colossus (y=5), so the full
+    // figure (0-14 m), the taut shoulder chain and the King all fit.
+    const [skx, skz] = stagedKingPos(state);
+    const pos = new THREE.Vector3(skx + 12, 6.5, skz + 10);
+    const look = new THREE.Vector3((skx + col.x) / 2, 5, (skz + col.z) / 2);
     return { pos, look };
   }
 
@@ -1494,9 +1530,22 @@ export function createRenderer(canvas, kingTextureUrl) {
     // the fallen Titan's chest (sigil) in victory, so he stands ON the
     // Titan instead of alone on the floor.
     const ky = stagedKingY(state);
-    if (camMode === 'cover') kingSprite.scale.set(6.8, 5.1, 1);
+    if (camMode === 'cover') kingSprite.scale.set(COVER_KING_SCALE[0], COVER_KING_SCALE[1], 1);
     else if (camMode === 'victory') kingSprite.scale.set(VICTORY_KING_SCALE[0], VICTORY_KING_SCALE[1], 1);
     else kingSprite.scale.set(2.4, 1.8, 1);
+    // Fix round 5 (GLM, re-vote #3): the 0.55-opacity win overlay crushes
+    // the victory King's max RGB to [121,99,119] — at 320px he is a dark
+    // blob, not a crowned figure. Overbrighten the sprite in victory mode
+    // only; reset to (1,1,1) elsewhere (the material is shared across
+    // modes). 1.5x (first attempt) only reached [138,134,133] — GLM's
+    // [180,148,178] estimate assumed the overlay would not bite; the
+    // overlay DOES dim the canvas, so 2.2x is needed to clear ~[170,140,
+    // 170]. Do NOT apply Gemini's nudge (king.y +0.6 / king.z +0.5):
+    // GLM's pixel scan proved there is no occlusion — the King is one
+    // contiguous ~93x82 red-robe region; the "slab" was the stats box's
+    // gold border.
+    if (camMode === 'victory') kingSprite.material.color.setRGB(2.2, 2.2, 2.2);
+    else kingSprite.material.color.setRGB(1, 1, 1);
     kingSprite.position.set(kx, ky, kz);
     const inv = k.invuln > 0 && Math.floor(performance.now() / 120) % 2 === 0;
     kingSprite.material.opacity = inv ? 0.4 : 1;
@@ -1519,7 +1568,12 @@ export function createRenderer(canvas, kingTextureUrl) {
     // Fix round 3: 9x9, opacity 0.65, centred on the King (ky + 1.3 is
     // the old k.y + 2.1 at the cover King height).
     kingHalo.visible = camMode === 'cover';
-    if (camMode === 'cover') kingHalo.position.set(kx, ky + 1.3, kz - 0.3);
+    // Fix round 5: the 9x9 halo was sized for the 6.8-wide King; scale it
+    // with him (same 1.32 ratio) so it stays a glow, not a gold sun.
+    if (camMode === 'cover') {
+      kingHalo.position.set(kx, ky + 1.3, kz - 0.3);
+      kingHalo.scale.setScalar((COVER_KING_SCALE[0] * 1.32) / 9);
+    }
     // Fix round 2 (A): kingLight follows the staged King; the warm fill
     // is full-strength in the staged cover/play frames and gentle
     // elsewhere (the title frame keeps its cave mood); the brazier light

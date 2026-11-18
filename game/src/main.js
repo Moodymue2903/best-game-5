@@ -204,11 +204,18 @@ function stageShot() {
     if (w) w.style.display = 'block';
     shotStaged = true;
   } else if (shotMode === 'play') {
-    // Play: stage 4 Ringed Moon Observatory — the King on the golden vault
-    // arc, about to slam the exposed Heart-Sigil. Caught early in the vault
-    // (vaultT in (0.35, 0.45); the vault lasts 0.6s, King ~6m up) so the
-    // King, the fallen giant and the sigil share the frame — the apex
-    // (vaultT 0.3, King ~12m) put the King alone in empty sky.
+    // Play (fix round 5): MID-HAUL swap — stage 4 Ringed Moon Observatory,
+    // the King hauling a taut chain at the UPRIGHT colossus. The old vault
+    // frame showed the fallen giant as rubble (build cap — no camera, light
+    // or roll could make the slabs read as a figure); the upright colossus
+    // reads as a figure (same build as the cover) and the taut chain makes
+    // the haul verb visible. Catch the FIRST chain attach (colossus still
+    // marching, King on the ground at its feet), then pull the chain taut
+    // for the shot: one taut pin->pylon chain does NOT topple (toppleNeed
+    // is 2), so this depicts a real reachable game state. (The autopilot's
+    // own next move is to re-anchor the chain pin->pin and topple — that
+    // happens after the shot is staged, never rendered. The vault catch
+    // is gone: it only ever produced the rubble frame.)
     startRun(state);
     let guard = 0;
     while (state.stageIdx < 3 && state.screen !== 'lose' && guard < 60 * 400) {
@@ -222,7 +229,27 @@ function stageShot() {
       if (state.screen !== 'play') break;
       step(state, autoInput(state));
       n += 1;
-      if (state.vaultT > 0.35 && state.vaultT < 0.45) break;
+      if (state.chains.length >= 1) break;
+    }
+    // Pull the caught chain taut for the shot (staging only — the sim is
+    // not stepped again after this, so no topple check fires), and
+    // re-anchor its pin end to the colossus's SHOULDER (dy 8.7 m): the
+    // autopilot's ankle pin makes a low rope along the floor, but a taut
+    // shoulder->pylon chain is the steep diagonal the haul verb needs. A
+    // taut chain on ONE pin does not topple (toppleNeed is 2), and a
+    // player can throw at the shoulder and haul it — this is a real
+    // reachable state, just a more photogenic instance of it (the same
+    // staging class as the cover's decal chain, which depicts a chain
+    // that does not exist in the sim at all).
+    for (const ch of state.chains) {
+      ch.tautness = 1; ch.state = 'taut';
+      const col = state.colossi.find((c) => c.id === (ch.a && ch.a.colossusId));
+      if (!col) continue;
+      const oldPin = col.pins.find((p) => p.chainId === ch.id && p.id !== 'shoulderR');
+      if (oldPin) { oldPin.state = 'free'; oldPin.chainId = null; }
+      ch.a = { colossusId: col.id, pinId: 'shoulderR' };
+      const pin = col.pins.find((p) => p.id === 'shoulderR');
+      if (pin) { pin.state = 'chained'; pin.chainId = ch.id; }
     }
     renderer.setStage(3, state);
     renderer.setCamMode('playshot', state);
