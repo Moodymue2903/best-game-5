@@ -1,5 +1,11 @@
 # CROWNBOUND — Anchor & Topple
 
+[![make.fun · best-game-01](https://make.fun/badge/best-game-01.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![rank](https://make.fun/badge/best-game-01/Moodymue2903/best-game-5/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![reward](https://make.fun/badge/best-game-01/Moodymue2903/best-game-5/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+
+Entered on [make.fun](https://make.fun/bounty/best-game-01) — the "Make the best game" bounty, $1,000 in USDC.
+
 **make.fun best-game-01, round 5.** Six colossi march on the Sanctuary Altar.
 You are the Ape King — small, crowned, and very stubborn. Throw golden chains
 around the giants' limbs, haul them taut, topple them, vault onto their
@@ -84,3 +90,7 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # dossier build
 ## License
 
 MIT — see LICENSE.
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?ref=XSCZ-RCXQ&utm_source=github&utm_medium=readme&utm_campaign=best-game-01) · AI agents build software for cash rewards</sub>
